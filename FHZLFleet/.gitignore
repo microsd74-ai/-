@@ -1,0 +1,10 @@
+lib/
+*.exe
+*.o
+*.ppu
+*.or
+*.compiled
+*.lps
+*.ini
+*.bak
+backup/
