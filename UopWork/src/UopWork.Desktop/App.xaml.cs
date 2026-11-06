@@ -2,9 +2,13 @@ using System.Windows;
 namespace UopWork.Desktop;
 public partial class App : Application
 {
+    private readonly bool manualStartup;
+    public App() { }
+    internal App(bool manualStartup)=>this.manualStartup=manualStartup;
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if(manualStartup)return;
         var demo=e.Args.Contains("--demo");
         var window=new MainWindow(demo);MainWindow=window;window.Show();
     }

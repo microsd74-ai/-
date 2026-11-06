@@ -10,10 +10,6 @@ using UopWork.Desktop;
 using UopWork.Desktop.Views;
 internal static class Program
 {
-    private sealed class CheckApplication : App
-    {
-        protected override void OnStartup(StartupEventArgs e) { }
-    }
     private sealed class BindingLog : TraceListener
     {
         public List<string> Errors {get;}=[];
@@ -36,7 +32,7 @@ internal static class Program
             var screenshots=Path.GetFullPath(args.FirstOrDefault()??"artifacts/screenshots");Directory.CreateDirectory(screenshots);
             var log=new BindingLog();PresentationTraceSources.DataBindingSource.Switch.Level=SourceLevels.Error;
             PresentationTraceSources.DataBindingSource.Listeners.Add(log);
-            var app=new CheckApplication();app.InitializeComponent();
+            var app=new App(manualStartup:true);app.InitializeComponent();
             var window=new MainWindow(true);app.MainWindow=window;window.Show();Pump();
             var dashboard=(Dashboard)window.DataContext;
             Check(dashboard.Demo && dashboard.Printers.Count==7,"explicit demo data");
