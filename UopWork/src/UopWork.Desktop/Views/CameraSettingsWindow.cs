@@ -16,7 +16,7 @@ public sealed class CameraSettingsWindow : Window
         panel.Children.Add(new TextBlock{Text=Title,FontSize=23,FontWeight=FontWeights.Bold});
         panel.Children.Add(new TextBlock{Text="Hikvision · две камеры зоны печати. Подключение напрямую к регистратору по RTSP.",Margin=new Thickness(0,12,0,12)});
         var original=printer.Cameras??new RecorderSettings();
-        var enabled=new CheckBox{Content="Показывать камеры этого принтера",IsChecked=original.Enabled,Margin=new Thickness(0,4,0,12)};panel.Children.Add(enabled);
+        var enabled=new CheckBox{Content="Показывать камеры этого принтера",IsChecked=original.Enabled,Margin=new Thickness(0,4,0,12)};enabled.SetResourceReference(Control.ForegroundProperty,"TextBrush");panel.Children.Add(enabled);
         TextBox Field(Panel parent,string label,string value){parent.Children.Add(new TextBlock{Text=label});var field=new TextBox{Text=value};parent.Children.Add(field);return field;}
         var addressRow=new Grid();addressRow.ColumnDefinitions.Add(new());addressRow.ColumnDefinitions.Add(new(){Width=new GridLength(120)});panel.Children.Add(addressRow);
         var left=new StackPanel{Margin=new Thickness(0,0,12,0)};var right=new StackPanel();addressRow.Children.Add(left);Grid.SetColumn(right,1);addressRow.Children.Add(right);
@@ -28,7 +28,7 @@ public sealed class CameraSettingsWindow : Window
         var chLeft=new StackPanel{Margin=new Thickness(0,0,12,0)};var chRight=new StackPanel();channelRow.Children.Add(chLeft);Grid.SetColumn(chRight,1);channelRow.Children.Add(chRight);
         var channel1=Field(chLeft,"Камера 1 — канал регистратора",original.Channel1.ToString());
         var channel2=Field(chRight,"Камера 2 — канал регистратора",original.Channel2.ToString());
-        var low=new CheckBox{Content="Дополнительный поток (меньше нагрузка на сеть)",IsChecked=original.Substream,Margin=new Thickness(0,2,0,12)};panel.Children.Add(low);
+        var low=new CheckBox{Content="Дополнительный поток (меньше нагрузка на сеть)",IsChecked=original.Substream,Margin=new Thickness(0,2,0,12)};low.SetResourceReference(Control.ForegroundProperty,"TextBrush");panel.Children.Add(low);
         var error=new TextBlock{MinHeight=32,Margin=new Thickness(0,4,0,8)};error.SetResourceReference(TextBlock.ForegroundProperty,"MutedBrush");panel.Children.Add(error);
         RecorderSettings Read()
         {
