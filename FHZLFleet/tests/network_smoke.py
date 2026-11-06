@@ -40,6 +40,7 @@ def receive(q, match, seconds=12):
             item = q.get(timeout=max(0.01, end-time.monotonic()))
         except queue.Empty:
             break
+        assert item.get('type') != 'diagnostic', item
         observed.append(item)
         if match(item):
             return item

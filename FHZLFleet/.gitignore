@@ -9,3 +9,5 @@ lib/
 *.bak
 backup/
 *.targets.json
+*.admin.json
+*.tmp

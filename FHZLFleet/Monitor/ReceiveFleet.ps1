@@ -23,7 +23,7 @@ try {
     while ($true) {
         if ([DateTime]::UtcNow -ge $nextConfig) {
             try {
-                $doc=Get-Content -LiteralPath $TargetsFile -Raw | ConvertFrom-Json
+                $doc=Get-Content -LiteralPath $TargetsFile -Raw -Encoding UTF8 | ConvertFrom-Json
                 if ($null -eq $doc -or $doc.targets -isnot [array]) { throw 'Invalid targets file' }
                 $desired=@{}
                 foreach ($endpoint in $doc.targets) {
@@ -66,7 +66,7 @@ try {
                         if (([DateTime]::UtcNow-$c.started).TotalSeconds -gt 1) { Drop $c }
                         continue
                     }
-                    $c.task.GetAwaiter().GetResult()
+                    [void]$c.task.GetAwaiter().GetResult()
                     $c.task=$null; $c.tcp.NoDelay=$true; $c.last=[DateTime]::UtcNow
                     Status $c 'connected'
                 }
