@@ -1,4 +1,4 @@
-$ErrorActionPreference='Stop'
+﻿$ErrorActionPreference='Stop'
 # Load only real, read-only helper functions; no Windows or FHZL required.
 $tokens=$null; $errors=$null
 $ast=[System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../Agent/ReadPrinter.ps1'),[ref]$tokens,[ref]$errors)
@@ -12,6 +12,8 @@ using System;
 namespace System.Windows.Automation {
  public class TextPattern { public static string Pattern="Text"; }
  public class ValuePattern { public static string Pattern="Value"; }
+ }
+namespace System.Windows.Automation.Text {
  public enum TextPatternRangeEndpoint { Start, End }
  public enum TextUnit { Character }
 }
@@ -20,10 +22,10 @@ public class TailValuePattern { public TailValue Current {get;set;} }
 public class TailRange {
  public bool Fail; public string Content;
  public TailRange Clone() { return this; }
- public void MoveEndpointByRange(System.Windows.Automation.TextPatternRangeEndpoint a,TailRange b,System.Windows.Automation.TextPatternRangeEndpoint c) {
+ public void MoveEndpointByRange(System.Windows.Automation.Text.TextPatternRangeEndpoint a,TailRange b,System.Windows.Automation.Text.TextPatternRangeEndpoint c) {
   if (Fail) throw new NotSupportedException("Qt range endpoints unsupported");
  }
- public int MoveEndpointByUnit(System.Windows.Automation.TextPatternRangeEndpoint a,System.Windows.Automation.TextUnit u,int n) { return n; }
+ public int MoveEndpointByUnit(System.Windows.Automation.Text.TextPatternRangeEndpoint a,System.Windows.Automation.Text.TextUnit u,int n) { return n; }
  public string GetText(int n) { return Content.Substring(Math.Max(0,Content.Length-n)); }
 }
 public class TailTextPattern { public TailRange DocumentRange {get;set;} }

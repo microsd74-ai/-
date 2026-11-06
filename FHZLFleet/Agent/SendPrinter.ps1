@@ -1,20 +1,31 @@
 ﻿param(
-    [Parameter(Mandatory=$true)][string]$Server,
-    [ValidateRange(1,65535)][int]$Port = 5055,
+    [ValidateRange(1,65535)][int]$Port=5055,
     [Parameter(Mandatory=$true)][string]$PrinterId,
     [Parameter(Mandatory=$true)][string]$PrinterName
 )
-$ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-$client = $null
-$nextConnect = [DateTime]::MinValue
+$ErrorActionPreference='Stop'
+[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false)
+$listener=$null
+$clients=[System.Collections.Generic.List[object]]::new()
 function Publish($value) {
     [Console]::Out.WriteLine(($value | ConvertTo-Json -Compress -Depth 4))
     [Console]::Out.Flush()
 }
 try {
     . (Join-Path $PSScriptRoot 'ReadPrinter.ps1')
+    $listener=[System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Any,$Port)
+    $listener.Start()
+    Publish @{type='listening'; detail="Port $Port"}
+    $nextRead=[DateTime]::MinValue
     while ($true) {
+        if ($listener.Pending()) {
+            $tcp=$listener.AcceptTcpClient()
+            if ($clients.Count -ge 16) { $tcp.Close() } else {
+                $tcp.NoDelay=$true; $tcp.SendTimeout=250
+                $clients.Add($tcp)
+            }
+        }
+        if ([DateTime]::UtcNow -ge $nextRead) {
             $extra=$null
             if (Get-Command Get-PrinterTelemetry -ErrorAction SilentlyContinue) {
                 $snapshot=Get-PrinterTelemetry
@@ -33,41 +44,28 @@ try {
                 $message.start=$parts[6]; $message.duration=$parts[7]
             }
             if ($null -ne $extra) { $message['extra']=$extra }
-            if ($null -eq $client -and [DateTime]::UtcNow -ge $nextConnect) {
-                try {
-                    $client = [System.Net.Sockets.TcpClient]::new()
-                    $task = $client.ConnectAsync($Server, $Port)
-                    if (-not $task.Wait(500)) { throw 'Connection timeout' }
-                    $task.GetAwaiter().GetResult()
-                    $client.SendTimeout = 500
-                    $client.NoDelay = $true
-                } catch {
-                    if ($null -ne $client) { $client.Close(); $client=$null }
-                    $nextConnect = [DateTime]::UtcNow.AddSeconds(2)
-                }
+
+            $bytes=[System.Text.Encoding]::UTF8.GetBytes(($message | ConvertTo-Json -Compress -Depth 4)+"`n")
+            if ($bytes.Length -gt 16000 -and $null -ne $extra) {
+                $extra.logTail=''; $extra.logState='omitted_by_size'
+                $bytes=[System.Text.Encoding]::UTF8.GetBytes(($message | ConvertTo-Json -Compress -Depth 4)+"`n")
             }
-            $sent = $false
-            if ($null -ne $client) {
+            foreach ($tcp in @($clients.ToArray())) {
                 try {
-                    $bytes = [System.Text.Encoding]::UTF8.GetBytes(($message | ConvertTo-Json -Compress -Depth 4) + "`n")
-                    if ($bytes.Length -gt 16000 -and $null -ne $extra) {
-                        $extra.logTail=''; $extra.logState='omitted_by_size'
-                        $bytes = [System.Text.Encoding]::UTF8.GetBytes(($message | ConvertTo-Json -Compress -Depth 4) + "`n")
-                    }
-                    $client.GetStream().Write($bytes, 0, $bytes.Length)
-                    $sent = $true
-                } catch {
-                    $client.Close(); $client=$null
-                    $nextConnect = [DateTime]::UtcNow.AddSeconds(2)
-                }
+                    if ($tcp.Client.Poll(0,[System.Net.Sockets.SelectMode]::SelectRead) -and $tcp.Available -eq 0) { throw 'Disconnected' }
+                    $tcp.GetStream().Write($bytes,0,$bytes.Length)
+                } catch { $tcp.Close(); [void]$clients.Remove($tcp) }
             }
-            $message['sent'] = $sent
+            $message['connections']=$clients.Count
             Publish $message
-        Start-Sleep -Milliseconds 1000
+            $nextRead=[DateTime]::UtcNow.AddSeconds(1)
+        }
+        Start-Sleep -Milliseconds 25
     }
 } catch {
     Publish @{type='error'; detail=$_.Exception.Message}
     exit 1
 } finally {
-    if ($null -ne $client) { $client.Close() }
+    foreach ($tcp in $clients) { $tcp.Close() }
+    if ($null -ne $listener) { $listener.Stop() }
 }

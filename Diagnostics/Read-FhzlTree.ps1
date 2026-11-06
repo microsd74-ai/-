@@ -82,8 +82,8 @@ try {
                             if ($record.text.Length -ge 8192) { $result.limited=$true }
                             # Read the end of the document without scrolling or selecting.
                             $range=$pattern.DocumentRange.Clone()
-                            $range.MoveEndpointByRange([System.Windows.Automation.TextPatternRangeEndpoint]::Start,$range,[System.Windows.Automation.TextPatternRangeEndpoint]::End)
-                            [void]$range.MoveEndpointByUnit([System.Windows.Automation.TextPatternRangeEndpoint]::Start,[System.Windows.Automation.TextUnit]::Character,-8192)
+                            $range.MoveEndpointByRange([System.Windows.Automation.Text.TextPatternRangeEndpoint]::Start,$range,[System.Windows.Automation.Text.TextPatternRangeEndpoint]::End)
+                            [void]$range.MoveEndpointByUnit([System.Windows.Automation.Text.TextPatternRangeEndpoint]::Start,[System.Windows.Automation.Text.TextUnit]::Character,-8192)
                             $record.textTail=$range.GetText(8192)
                         }
                     } catch { $result.errors++; $record.patternErrors+=('TextPattern: '+$_.Exception.GetBaseException().Message) }

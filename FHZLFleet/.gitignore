@@ -8,3 +8,4 @@ lib/
 *.ini
 *.bak
 backup/
+*.targets.json

@@ -15,10 +15,11 @@ try {
 Add-Type -TypeDefinition @"
 using System;
 using System.Collections.Generic;
+namespace System.Windows.Automation.Text { public enum TextPatternRangeEndpoint { Start, End } public enum TextUnit { Character } }
 namespace System.Windows.Automation {
+    using System.Windows.Automation.Text;
     public enum TreeScope { Children }
-    public enum TextPatternRangeEndpoint { Start, End }
-    public enum TextUnit { Character }
+
     public class Condition { public static object TrueCondition = new object(); }
     public class ValuePattern { public static string Pattern = "Value"; }
     public class TextPattern { public static string Pattern = "Text"; }

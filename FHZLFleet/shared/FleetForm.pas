@@ -10,7 +10,8 @@ type
     Worker: TProcess;
     Tick: TTimer;
     HostEdit, IdEdit, NameEdit, PortEdit: TEdit;
-    RunButton: TButton;
+    RunButton, RemoveButton: TButton;
+    Targets: TStringList;
     StateLabel: TLabel;
     Grid: TStringGrid;
     Log, Details: TMemo;
@@ -19,6 +20,12 @@ type
     LastSeen: array of QWord;
     procedure StartClick(Sender: TObject);
     procedure Poll(Sender: TObject);
+    procedure RemoveClick(Sender: TObject);
+    procedure SaveTargets;
+    procedure LoadTargets;
+    procedure StartMonitor;
+    function EnsureRow(const ID: string): Integer;
+    function TargetsPath: string;
     procedure HandleLine(const Line: string);
     procedure AddLog(const S: string);
     procedure ShowDetails(Sender: TObject);
@@ -30,6 +37,20 @@ type
   end;
 var MainForm: TFleetForm; AgentMode: Boolean;
 implementation
+function NormalizeIPv4(const S: string): string;
+var Parts: TStringList; I, N: Integer; C: Char;
+begin
+  Result := ''; Parts := TStringList.Create;
+  try
+    for C in S do if not (C in ['0'..'9','.']) then raise EConvertError.Create('Введите IPv4, например 192.168.1.112');
+    Parts.StrictDelimiter := True; Parts.Delimiter := '.'; Parts.DelimitedText := S;
+    if Parts.Count <> 4 then raise EConvertError.Create('Введите полный IPv4 из четырёх чисел');
+    for I := 0 to 3 do begin
+      if not TryStrToInt(Parts[I],N) or (N < 0) or (N > 255) then raise EConvertError.Create('Числа в IP должны быть от 0 до 255');
+      if I > 0 then Result := Result + '.'; Result := Result + IntToStr(N);
+    end;
+  finally Parts.Free end;
+end;
 function TFleetForm.AddEdit(const Title, Value: string; X, W: Integer): TEdit;
 var L: TLabel;
 begin
@@ -46,23 +67,30 @@ begin
   Width := 1120; Height := 820; Constraints.MinWidth := 1060; Constraints.MinHeight := 760; Position := poScreenCenter;
   Caption := 'FHZL — общий монитор';
   if AgentMode then Caption := 'FHZL — сборщик показателей';
+  Targets := TStringList.Create;
   C := TIniFile.Create(ChangeFileExt(Application.ExeName, '.ini'));
   try
     PortEdit := AddEdit('Порт', C.ReadString('network', 'port', '5055'), 12, 80);
     if AgentMode then begin
-      HostEdit := AddEdit('IP компьютера монитора', C.ReadString('network', 'host', ''), 110, 220);
-      IdEdit := AddEdit('Уникальный ID принтера', C.ReadString('printer', 'id', ''), 350, 180);
-      NameEdit := AddEdit('Название принтера', C.ReadString('printer', 'name', ''), 550, 250);
-    end;
+      IdEdit := AddEdit('Уникальный ID принтера', C.ReadString('printer', 'id', GetEnvironmentVariable('COMPUTERNAME')), 110, 240);
+      NameEdit := AddEdit('Название принтера', C.ReadString('printer', 'name', ''), 370, 420);
+    end else HostEdit := AddEdit('IP компьютера принтера', C.ReadString('network', 'printer_host', ''), 110, 260);
   finally C.Free end;
   RunButton := TButton.Create(Self); RunButton.Parent := Self;
-  RunButton.SetBounds(820, 30, 200, 30); RunButton.Caption := 'Запустить'; RunButton.OnClick := @StartClick;
+  RunButton.SetBounds(820, 30, 200, 30); RunButton.Caption := 'Запустить агент'; RunButton.OnClick := @StartClick;
+  if not AgentMode then begin
+    RunButton.SetBounds(390,30,230,30); RunButton.Caption := 'Добавить и подключить';
+    RemoveButton := TButton.Create(Self); RemoveButton.Parent := Self;
+    RemoveButton.SetBounds(640,30,260,30); RemoveButton.Caption := 'Удалить выбранный принтер'; RemoveButton.OnClick := @RemoveClick;
+  end;
   StateLabel := TLabel.Create(Self); StateLabel.Parent := Self;
   StateLabel.SetBounds(12, 78, 1060, 28); StateLabel.Caption := 'Введите настройки и нажмите «Запустить».';
   Grid := TStringGrid.Create(Self); Grid.Parent := Self; Grid.SetBounds(12, 110, 1070, 260);
   Grid.Anchors := [akLeft, akTop, akRight]; Grid.ColCount := 9; Grid.RowCount := 2;
   Grid.FixedRows := 1; Grid.FixedCols := 0; Grid.DefaultColWidth := 145;
   for I := 0 to 8 do Grid.Cells[I,0] := Headers[I];
+  if not AgentMode then Grid.Cells[0,0] := 'IP:порт';
+  Grid.ColWidths[0] := 170;
   Grid.ColWidths[2] := 360; SetLength(LastSeen, 2); SetLength(DetailText, 2);
   Grid.OnClick := @ShowDetails;
   Details := TMemo.Create(Self); Details.Parent := Self;
@@ -72,53 +100,135 @@ begin
   Log := TMemo.Create(Self); Log.Parent := Self; Log.SetBounds(12, 620, 1070, 140);
   Log.Anchors := [akLeft, akTop, akRight, akBottom]; Log.ReadOnly := True; Log.ScrollBars := ssAutoVertical;
   Tick := TTimer.Create(Self); Tick.Interval := 100; Tick.OnTimer := @Poll;
+  if not AgentMode then begin
+    StateLabel.Caption := 'Введите IP компьютера принтера и нажмите «Добавить и подключить».';
+    LoadTargets;
+    if Targets.Count > 0 then StartMonitor;
+  end;
 end;
 procedure TFleetForm.AddLog(const S: string);
 begin
   Log.Lines.Add(FormatDateTime('hh:nn:ss',Now) + ' ' + S);
   while Log.Lines.Count > 200 do Log.Lines.Delete(0);
 end;
-procedure TFleetForm.StartClick(Sender: TObject);
-var Port: Integer; C: TIniFile; Script: string;
+function TFleetForm.TargetsPath: string;
+begin Result := ChangeFileExt(Application.ExeName, '.targets.json') end;
+function TFleetForm.EnsureRow(const ID: string): Integer;
+var I: Integer;
+begin
+  for I := 1 to Grid.RowCount-1 do if Grid.Cells[0,I] = ID then Exit(I);
+  if Grid.Cells[0,1] = '' then Result := 1 else begin
+    Result := Grid.RowCount; Grid.RowCount := Result+1;
+    SetLength(LastSeen,Result+1); SetLength(DetailText,Result+1);
+  end;
+  Grid.Cells[0,Result] := ID;
+end;
+procedure TFleetForm.SaveTargets;
+var O: TJSONObject; A: TJSONArray; L: TStringList; I: Integer;
+begin
+  O := TJSONObject.Create; L := TStringList.Create;
+  try
+    A := TJSONArray.Create; O.Add('targets',A);
+    for I := 0 to Targets.Count-1 do A.Add(Targets[I]);
+    L.Text := O.AsJSON; L.SaveToFile(TargetsPath);
+  finally L.Free; O.Free end;
+end;
+procedure TFleetForm.LoadTargets;
+var D: TJSONData; A: TJSONArray; L: TStringList; I,R: Integer; ID: string;
+begin
+  if not FileExists(TargetsPath) then Exit;
+  D := nil; L := TStringList.Create;
+  try
+    try
+      L.LoadFromFile(TargetsPath); D := GetJSON(L.Text);
+      if not (D is TJSONObject) then raise Exception.Create('Неверный список адресов');
+      if not (TJSONObject(D).Find('targets') is TJSONArray) then raise Exception.Create('Неверный список адресов');
+      A := TJSONArray(TJSONObject(D).Find('targets'));
+      if A.Count > 128 then raise Exception.Create('Слишком много адресов');
+      for I := 0 to A.Count-1 do begin
+        ID := A.Strings[I];
+        if Targets.IndexOf(ID) < 0 then begin
+          Targets.Add(ID); R := EnsureRow(ID); Grid.Cells[1,R] := ID;
+          Grid.Cells[2,R] := 'Ожидание подключения';
+        end;
+      end;
+    except on E: Exception do begin AddLog(E.Message); StateLabel.Caption := E.Message end end;
+  finally D.Free; L.Free end;
+end;
+procedure TFleetForm.StartMonitor;
+var Script: string;
 begin
   if Assigned(Worker) then Exit;
+  Script := ExtractFilePath(Application.ExeName) + 'ReceiveFleet.ps1';
+  try
+    if not FileExists(Script) then raise Exception.Create('Не найден ReceiveFleet.ps1 рядом с EXE');
+    Worker := TProcess.Create(nil);
+    Worker.Executable := GetEnvironmentVariable('SystemRoot') + '\System32\WindowsPowerShell\v1.0\powershell.exe';
+    Worker.Parameters.Add('-NoLogo'); Worker.Parameters.Add('-NoProfile'); Worker.Parameters.Add('-NonInteractive');
+    Worker.Parameters.Add('-ExecutionPolicy'); Worker.Parameters.Add('Bypass'); Worker.Parameters.Add('-File'); Worker.Parameters.Add(Script);
+    Worker.Parameters.Add('-TargetsFile'); Worker.Parameters.Add(TargetsPath);
+    Worker.Options := [poUsePipes,poStderrToOutPut,poNoConsole]; Worker.Execute; Pending := '';
+    StateLabel.Caption := 'Монитор подключается к сохранённым адресам принтеров.';
+  except on E: Exception do begin FreeAndNil(Worker); StateLabel.Caption := E.Message; AddLog(E.Message) end end;
+end;
+procedure TFleetForm.StartClick(Sender: TObject);
+var Port,R: Integer; C: TIniFile; Script,IP,ID: string; Added: Boolean;
+begin
+  if AgentMode and Assigned(Worker) then Exit;
   if not TryStrToInt(PortEdit.Text, Port) or (Port < 1) or (Port > 65535) then begin
     StateLabel.Caption := 'Укажите порт от 1 до 65535.'; Exit;
   end;
-  if AgentMode then
-    if (Trim(HostEdit.Text) = '') or (Trim(IdEdit.Text) = '') or (Trim(NameEdit.Text) = '') or
-       (Length(IdEdit.Text) > 80) or (Length(NameEdit.Text) > 120) then begin
-      StateLabel.Caption := 'Укажите адрес монитора, уникальный ID (до 80 символов) и имя (до 120).'; Exit;
-    end;
-  if AgentMode then Script := 'SendPrinter.ps1' else Script := 'ReceiveFleet.ps1';
-  Script := ExtractFilePath(Application.ExeName) + Script;
-  if not FileExists(Script) then begin StateLabel.Caption := UTF8String('Рядом с EXE не найден ') + Script; Exit end;
+  if not AgentMode then begin
+    try
+      IP := NormalizeIPv4(Trim(HostEdit.Text)); HostEdit.Text := IP; ID := IP+':'+IntToStr(Port);
+      Added := Targets.IndexOf(ID) < 0;
+      if Added then begin
+        if Targets.Count >= 128 then raise Exception.Create('Поддерживается до 128 адресов');
+        Targets.Add(ID);
+        try SaveTargets except Targets.Delete(Targets.Count-1); raise end;
+      end;
+      R := EnsureRow(ID); Grid.Row := R;
+      if Grid.Cells[1,R] = '' then Grid.Cells[1,R] := ID;
+      if Added then Grid.Cells[2,R] := 'Ожидание подключения';
+      StartMonitor;
+    except on E: Exception do begin StateLabel.Caption := E.Message; AddLog(E.Message) end end;
+    Exit;
+  end;
+  if (Trim(IdEdit.Text) = '') or (Trim(NameEdit.Text) = '') or
+     (Length(IdEdit.Text) > 80) or (Length(NameEdit.Text) > 120) then begin
+    StateLabel.Caption := 'Укажите ID (до 80 символов) и имя принтера (до 120).'; Exit;
+  end;
+  Script := ExtractFilePath(Application.ExeName) + 'SendPrinter.ps1';
   try
+    if not FileExists(Script) then raise Exception.Create('Не найден SendPrinter.ps1 рядом с EXE');
     C := TIniFile.Create(ChangeFileExt(Application.ExeName, '.ini'));
     try
-      C.WriteString('network', 'port', PortEdit.Text);
-      if AgentMode then begin
-        C.WriteString('network', 'host', Trim(HostEdit.Text));
-        C.WriteString('printer', 'id', Trim(IdEdit.Text));
-        C.WriteString('printer', 'name', Trim(NameEdit.Text));
-      end;
+      C.WriteString('network','port',IntToStr(Port)); C.WriteString('printer','id',Trim(IdEdit.Text)); C.WriteString('printer','name',Trim(NameEdit.Text));
     finally C.Free end;
     Worker := TProcess.Create(nil);
     Worker.Executable := GetEnvironmentVariable('SystemRoot') + '\System32\WindowsPowerShell\v1.0\powershell.exe';
-    Worker.Parameters.Add('-NoLogo'); Worker.Parameters.Add('-NoProfile');
-    Worker.Parameters.Add('-NonInteractive'); Worker.Parameters.Add('-ExecutionPolicy');
-    Worker.Parameters.Add('Bypass'); Worker.Parameters.Add('-File'); Worker.Parameters.Add(Script);
+    Worker.Parameters.Add('-NoLogo'); Worker.Parameters.Add('-NoProfile'); Worker.Parameters.Add('-NonInteractive');
+    Worker.Parameters.Add('-ExecutionPolicy'); Worker.Parameters.Add('Bypass'); Worker.Parameters.Add('-File'); Worker.Parameters.Add(Script);
     Worker.Parameters.Add('-Port'); Worker.Parameters.Add(IntToStr(Port));
-    if AgentMode then begin
-      Worker.Parameters.Add('-Server'); Worker.Parameters.Add(Trim(HostEdit.Text));
-      Worker.Parameters.Add('-PrinterId'); Worker.Parameters.Add(Trim(IdEdit.Text));
-      Worker.Parameters.Add('-PrinterName'); Worker.Parameters.Add(Trim(NameEdit.Text));
-    end;
-    Worker.Options := [poUsePipes, poStderrToOutPut, poNoConsole]; Worker.Execute;
-    Pending := ''; RunButton.Enabled := False; PortEdit.Enabled := False;
-    if AgentMode then begin HostEdit.Enabled := False; IdEdit.Enabled := False; NameEdit.Enabled := False end;
-    StateLabel.Caption := 'Запуск...'; AddLog('Запуск');
+    Worker.Parameters.Add('-PrinterId'); Worker.Parameters.Add(Trim(IdEdit.Text));
+    Worker.Parameters.Add('-PrinterName'); Worker.Parameters.Add(Trim(NameEdit.Text));
+    Worker.Options := [poUsePipes,poStderrToOutPut,poNoConsole]; Worker.Execute; Pending := '';
+    RunButton.Enabled := False; PortEdit.Enabled := False; IdEdit.Enabled := False; NameEdit.Enabled := False;
+    StateLabel.Caption := 'Запуск агента...';
   except on E: Exception do begin FreeAndNil(Worker); StateLabel.Caption := E.Message; AddLog(E.Message) end end;
+end;
+procedure TFleetForm.RemoveClick(Sender: TObject);
+var R,I,N: Integer; ID: string;
+begin
+  R := Grid.Row; if (R < 1) or (R >= Grid.RowCount) then Exit;
+  ID := Grid.Cells[0,R]; N := Targets.IndexOf(ID); if N < 0 then Exit;
+  Targets.Delete(N);
+  try SaveTargets except on E: Exception do begin Targets.Insert(N,ID); StateLabel.Caption := E.Message; Exit end end;
+  for I := R to Grid.RowCount-2 do begin Grid.Rows[I].Assign(Grid.Rows[I+1]); LastSeen[I] := LastSeen[I+1]; DetailText[I] := DetailText[I+1] end;
+  if Grid.RowCount > 2 then begin
+    Grid.RowCount := Grid.RowCount-1; SetLength(LastSeen,Grid.RowCount); SetLength(DetailText,Grid.RowCount);
+  end else begin Grid.Rows[1].Clear; LastSeen[1] := 0; DetailText[1] := '' end;
+  Details.Clear; AddLog(UTF8String('Удалён адрес: ')+ID); ShowDetails(Self);
 end;
 procedure TFleetForm.HandleLine(const Line: string);
 var Data: TJSONData; O: TJSONObject; Kind, ID, Status, OldStatus: string; R, I: Integer;
@@ -130,15 +240,20 @@ begin
     if not (Data is TJSONObject) then Exit;
     O := TJSONObject(Data); Kind := O.Get('type', '');
     if Kind = 'error' then begin StateLabel.Caption := UTF8String('Ошибка: ') + O.Get('detail',''); AddLog(StateLabel.Caption); Exit end;
-    if Kind = 'listening' then begin StateLabel.Caption := 'Приём запущен. Ожидание принтеров.'; AddLog(StateLabel.Caption); Exit end;
+    if Kind = 'listening' then begin StateLabel.Caption := 'Агент запущен. Ожидание подключения монитора.'; AddLog(StateLabel.Caption); Exit end;
+    if Kind = 'config_error' then begin AddLog(UTF8String('Ошибка списка адресов: ')+O.Get('detail','')); Exit end;
+    if Kind = 'connection' then begin
+      ID := O.Get('id',''); if Targets.IndexOf(ID) < 0 then Exit; R := EnsureRow(ID);
+      Status := O.Get('state','');
+      if Status = 'connecting' then Status := 'Подключение...'
+      else if Status = 'connected' then Status := 'Связь установлена, ожидание показателей'
+      else Status := 'Нет связи, повторное подключение';
+      Grid.Cells[2,R] := Status; AddLog(ID+': '+Status); Exit;
+    end;
     if (Kind <> 'telemetry') or (O.Get('version',0) <> 1) then Exit;
     ID := O.Get('id',''); if ID = '' then Exit;
-    R := 0;
-    for I := 1 to Grid.RowCount-1 do if Grid.Cells[0,I] = ID then begin R := I; Break end;
-    if R = 0 then begin
-      if Grid.Cells[0,1] = '' then R := 1 else begin R := Grid.RowCount; Grid.RowCount := R+1; SetLength(LastSeen, R+1); SetLength(DetailText, R+1) end;
-      Grid.Cells[0,R] := ID;
-    end;
+    if not AgentMode then if Targets.IndexOf(ID) < 0 then Exit;
+    R := EnsureRow(ID);
     Status := 'Показатели получены';
     DetailText[R] := FormatDetails(O);
     if Grid.Row = R then ShowDetails(Self);
@@ -152,8 +267,7 @@ begin
       else if Pos('READ_FAILED',Status)>0 then Status := 'Ошибка чтения окна FHZL';
     end;
     if AgentMode then begin
-      if O.Get('sent',False) then StateLabel.Caption := 'Данные отправлены монитору.'
-      else StateLabel.Caption := 'Нет связи с монитором. Повторное подключение автоматически.';
+      StateLabel.Caption := UTF8String('Агент работает. Подключено мониторов: ')+IntToStr(O.Get('connections',0));
     end;
     OldStatus := Grid.Cells[2,R]; Grid.Cells[1,R] := O.Get('name',''); Grid.Cells[2,R] := Status;
     Grid.Cells[3,R] := O.Get('printed','') + ' / ' + O.Get('total','');
@@ -222,7 +336,7 @@ begin
     if not Worker.Running and (Worker.Output.NumBytesAvailable=0) then begin
       StateLabel.Caption := 'Процесс остановлен. Проверьте журнал и настройки.';
       AddLog(StateLabel.Caption); FreeAndNil(Worker); RunButton.Enabled := True; PortEdit.Enabled := True;
-      if AgentMode then begin HostEdit.Enabled := True; IdEdit.Enabled := True; NameEdit.Enabled := True end;
+      if AgentMode then begin IdEdit.Enabled := True; NameEdit.Enabled := True end;
     end;
   end;
   for I := 1 to High(LastSeen) do
@@ -237,6 +351,7 @@ destructor TFleetForm.Destroy;
 begin
   Tick.Enabled := False;
   if Assigned(Worker) then begin if Worker.Running then Worker.Terminate(0); FreeAndNil(Worker) end;
+  Targets.Free;
   inherited Destroy;
 end;
 end.
