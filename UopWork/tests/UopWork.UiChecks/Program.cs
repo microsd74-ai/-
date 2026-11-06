@@ -56,8 +56,8 @@ internal static class Program
             var settings=new SettingsStore(Path.Combine(root,"settings.json"));
             settings.Save(new("Dark",[new(Guid.NewGuid(),"Тестовый принтер","127.0.0.1")]));
             var password=new PasswordStore(Path.Combine(root,"admin.json"));
-            var login=new PasswordWindow(password,false);login.Show();Pump();Capture(login,Path.Combine(screenshots,"password-setup.png"));login.Close();
-            var admin=new ManagementWindow(settings,password,()=>{},dashboard.Printers);admin.Show();Pump();Capture(admin,Path.Combine(screenshots,"management.png"));admin.Close();
+            var login=new PasswordWindow(password,false);login.Show();Pump();Check(login.WindowStyle==WindowStyle.None,"borderless password window");Capture(login,Path.Combine(screenshots,"password-setup.png"));login.Close();
+            var admin=new ManagementWindow(settings,password,()=>{},dashboard.Printers);admin.Show();Pump();Check(admin.WindowStyle==WindowStyle.None,"borderless management window");Capture(admin,Path.Combine(screenshots,"management.png"));admin.Close();
             Check(log.Errors.Count==0,"WPF binding errors: "+string.Join("\n",log.Errors));
             window.Hide();Console.WriteLine("PASS Windows WPF: resources, three themes, printer selection, alarm binding, admin/password windows, 1920/1366 screenshots");
             return 0;
