@@ -26,6 +26,13 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: UopWork/global.json
+      - name: Read application version
+        shell: pwsh
+        run: |
+          [xml]$uopProps = Get-Content Directory.Build.props
+          $uopVersion = [string]$uopProps.Project.PropertyGroup.Version
+          if ($uopVersion -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid application version' }
+          "UOP_VERSION=$uopVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Agent alarm source checks
         shell: powershell
         run: ../FHZLFleet/tests/alarm_read_smoke.ps1
@@ -38,6 +45,7 @@ jobs:
       - name: Add launchers and instructions
         shell: pwsh
         run: |
+          Set-Content artifacts/UopWork/VERSION.txt $env:UOP_VERSION
           Copy-Item Start-Demo.cmd artifacts/UopWork/
           Copy-Item README.md artifacts/UopWork/README.md
           Copy-Item docs artifacts/UopWork/docs -Recurse
@@ -47,13 +55,13 @@ jobs:
       - uses: actions/upload-artifact@v5
         if: always()
         with:
-          name: UOP-WORK-interface-screenshots
+          name: UOP-WORK-v${{ env.UOP_VERSION }}-interface-screenshots
           path: UopWork/artifacts/screenshots
           if-no-files-found: warn
           retention-days: 14
       - uses: actions/upload-artifact@v5
         with:
-          name: UOP-WORK-win-x64
+          name: UOP-WORK-v${{ env.UOP_VERSION }}-win-x64
           path: UopWork/artifacts/UopWork
           if-no-files-found: error
           retention-days: 14

@@ -53,6 +53,21 @@ internal static class Program
                 CheckLayout(window);
                 Capture(window,Path.Combine(screenshots,theme+"-1366.png"));
             }
+            Check(dashboard.ModeLabel.Contains("v0.2.0"),"visible build version");
+            var testClock=new UiClock();var stopped=new PrinterItem(new(Guid.NewGuid(),"Контроль слоя","127.0.0.8"),testClock);
+            var sample=dashboard.Printers[0].Data! with{Printed=100,Total=200,FinishKind="ESTIMATE",Alarm="1/1:E4.2: Test",AlarmRead=true};
+            stopped.Apply(sample);
+            for(int i=0;i<60;i++){testClock.Advance();stopped.Apply(sample);}
+            Check(stopped.StopAlarms.NeedsAttention&&stopped.Alarms.NeedsAttention,"stop and printer alarms independent");
+            var stopId=stopped.StopAlarms.Active.Single().Id;
+            stopped.AlarmCards.Single(c=>c.IsLayerStop).Acknowledge();
+            Check(!stopped.StopAlarms.NeedsAttention&&stopped.Alarms.NeedsAttention,"stop acknowledgement silenced printer alarm");
+            stopped.Apply(sample with{Alarm=""});Check(stopped.StopAlarms.Active.Count==1,"empty FHZL alarm cleared layer stop");
+            stopped.Apply(sample with{Printed=101,Alarm=""});Check(stopped.StopAlarms.Active.Count==0,"advance did not clear UI stop");
+            for(int i=0;i<60;i++){testClock.Advance();stopped.Apply(sample with{Printed=101,Alarm=""});}
+            Check(stopped.StopAlarms.NeedsAttention&&stopped.StopAlarms.Active.Single().Id!=stopId,"second stop did not rearm UI");
+            dashboard.Printers.Add(stopped);dashboard.Selected=stopped;dashboard.Tick();Pump();
+            Capture(window,Path.Combine(screenshots,"layer-stopped.png"));
             var settings=new SettingsStore(Path.Combine(root,"settings.json"));
             settings.Save(new("Dark",[new(Guid.NewGuid(),"Тестовый принтер","127.0.0.1")]));
             var password=new PasswordStore(Path.Combine(root,"admin.json"));
@@ -95,4 +110,12 @@ internal static class Program
         var bitmap=new RenderTargetBitmap((int)Math.Ceiling(window.ActualWidth),(int)Math.Ceiling(window.ActualHeight),96,96,PixelFormats.Pbgra32);
         bitmap.Render(window);var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(bitmap));using var output=File.Create(file);encoder.Save(output);
     }
+}
+
+sealed class UiClock : TimeProvider
+{
+    private long seconds;
+    public override long TimestampFrequency=>1;
+    public override long GetTimestamp()=>seconds;
+    public void Advance()=>seconds++;
 }

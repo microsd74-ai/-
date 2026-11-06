@@ -13,7 +13,7 @@ public partial class MainWindow : Window
     private readonly AlarmHistoryStore historyStore;
     private readonly System.Collections.ObjectModel.ObservableCollection<AlarmHistoryEntry> history=[];
     private readonly HashSet<PrinterItem> historyAttached=[];
-    private string soundFile="";
+    private string soundFile="",stopSoundFile="";
     private bool historyWritable=true;
     private readonly SettingsStore settings;
     private readonly PasswordStore password;
@@ -32,7 +32,7 @@ public partial class MainWindow : Window
         InitializeComponent();DataContext=dashboard;
         try
         {
-            var saved=settings.Load();soundFile=saved.AlarmSoundFile;theme=saved.Theme;App.SetTheme(theme);
+            var saved=settings.Load();soundFile=saved.AlarmSoundFile;stopSoundFile=saved.StopSoundFile;theme=saved.Theme;App.SetTheme(theme);
             ThemePicker.SelectedIndex=theme=="Light"?0:theme=="Terminal"?2:1;
             if(demo)
             {
@@ -49,7 +49,7 @@ public partial class MainWindow : Window
             if(dashboard.Demo)foreach(var p in dashboard.Printers.Where(p=>p.Connection!="Нет связи"))if(p.Data is {} data)p.Apply(data with{ReceivedAt=DateTimeOffset.Now});
             AttachHistory();
             dashboard.Tick();
-            if(!dashboard.Demo){audio.Update(dashboard.Printers.SelectMany(p=>p.Alarms.Active).Where(a=>!a.Acknowledged).Select(a=>a.Id),soundFile);dashboard.SoundStatus=audio.Status;}
+            if(!dashboard.Demo){UpdateAudio();dashboard.SoundStatus=audio.Status;}
             else dashboard.SoundStatus="Демо: автоматический звук отключён";
             if(!historyWritable)dashboard.SoundStatus+=" · история не сохраняется: проверьте файл alarm-history.json";
             dashboard.Refresh();
@@ -90,19 +90,19 @@ public partial class MainWindow : Window
         try
         {
             var auth=new PasswordWindow(password,false){Owner=this};if(auth.ShowDialog()!=true)return;
-            var admin=new ManagementWindow(settings,password,()=>{soundFile=settings.Load().AlarmSoundFile;if(!dashboard.Demo)Configure(settings.Load());else{dashboard.Printers.Clear();dashboard.LoadDemo(settings.Load().Printers);}},dashboard.Printers){Owner=this};
+            var admin=new ManagementWindow(settings,password,()=>{soundFile=settings.Load().AlarmSoundFile;stopSoundFile=settings.Load().StopSoundFile;if(!dashboard.Demo)Configure(settings.Load());else{dashboard.Printers.Clear();dashboard.LoadDemo(settings.Load().Printers);}},dashboard.Printers){Owner=this};
             admin.ShowDialog();if(admin.ExitRequested){allowExit=true;Close();}
         }
         catch(Exception ex) when(ex is IOException or ArgumentException or System.Text.Json.JsonException)
         {MessageBox.Show(this,ex.Message,"Управление");}
         finally{managementOpen=false;}
     }
-    private void AcknowledgeClick(object sender,RoutedEventArgs e){if(sender is Button{Tag:AlarmCard item}){item.Acknowledge();dashboard.Refresh();if(!dashboard.Demo)audio.Update(dashboard.Printers.SelectMany(p=>p.Alarms.Active).Where(a=>!a.Acknowledged).Select(a=>a.Id),soundFile);}}
+    private void AcknowledgeClick(object sender,RoutedEventArgs e){if(sender is Button{Tag:AlarmCard item}){item.Acknowledge();dashboard.Refresh();if(!dashboard.Demo)UpdateAudio();}}
     private void AttachHistory(){foreach(var p in dashboard.Printers)AttachHistory(p);}
     private void AttachHistory(PrinterItem item)
     {
         if(!historyAttached.Add(item))return;
-        item.Alarms.Changed+=change=>
+        void Record(AlarmChange change)
         {
             history.Insert(0,new(item.Config.Id,item.Name,change));
             while(history.Count>AlarmHistoryStore.Limit)history.RemoveAt(history.Count-1);
@@ -111,8 +111,10 @@ public partial class MainWindow : Window
                 try{historyStore.Save(history.Reverse());}
                 catch(Exception ex) when(ex is IOException or UnauthorizedAccessException){historyWritable=false;}
             }
-        };
+        }
+        item.Alarms.Changed+=Record;item.StopAlarms.Changed+=Record;
     }
+    private void UpdateAudio()=>audio.Update(dashboard.Printers.SelectMany(p=>p.Alarms.Active).Where(a=>!a.Acknowledged).Select(a=>a.Id),soundFile,dashboard.Printers.SelectMany(p=>p.StopAlarms.Active).Where(a=>!a.Acknowledged).Select(a=>a.Id),stopSoundFile);
     private void HistoryClick(object sender,RoutedEventArgs e)=>new AlarmHistoryWindow(history){Owner=this}.ShowDialog();
     private void WindowClosing(object? sender,CancelEventArgs e)
     {

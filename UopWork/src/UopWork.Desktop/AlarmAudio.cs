@@ -13,16 +13,21 @@ public sealed class AlarmAudio : IDisposable
     private DateTimeOffset nextPlay;
     private bool initialized;
     public string Status {get;private set;}="Звук готовится";
-    public void Update(IEnumerable<Guid> pending, string file)
+    private bool preferStop;
+    public void Update(IEnumerable<Guid> pending, string file, IEnumerable<Guid>? stopped=null, string stopFile="")
     {
-        if (!initialized || file!=configuredFile) Configure(file);
-        var current=string.Join(";",pending.Order());
-        if(current!=signature){Stop();signature=current;nextPlay=DateTimeOffset.MinValue;}
-        if(current.Length==0 || DateTimeOffset.UtcNow<nextPlay)return;
-        Play();nextPlay=DateTimeOffset.UtcNow.AddSeconds(10);
+        var errors=pending.Order().ToArray();var stops=(stopped??[]).Order().ToArray();
+        var current="E:"+string.Join(";",errors)+"|S:"+string.Join(";",stops);
+        if(!initialized || (errors.Length+stops.Length==0&&file!=configuredFile))Configure(file);
+        if(current!=signature){Stop();signature=current;nextPlay=DateTimeOffset.MinValue;preferStop=stops.Length>0;}
+        if(errors.Length+stops.Length==0 || DateTimeOffset.UtcNow<nextPlay)return;
+        bool isStop=stops.Length>0&&(errors.Length==0||preferStop);
+        var chosen=isStop?stopFile:file;
+        if(chosen!=configuredFile)Configure(chosen);
+        Play(isStop);preferStop=!isStop;nextPlay=DateTimeOffset.UtcNow.AddSeconds(10);
     }
-    public void Test(string file)
-    {if(!initialized || file!=configuredFile)Configure(file);Play();}
+    public void Test(string file,bool isStop=false)
+    {if(!initialized || file!=configuredFile)Configure(file);Play(isStop);}
     private void Configure(string file)
     {
         Stop();player?.Dispose();tone?.Dispose();player=null;tone=null;
@@ -70,11 +75,11 @@ public sealed class AlarmAudio : IDisposable
         tone=CreateTone();player=new SoundPlayer(tone);player.Load();
         Status=warning+"Звук: сигнал · русская женская озвучка не установлена";
     }
-    private void Play()
+    private void Play(bool isStop)
     {
         try
         {
-            if(speaker is not null)((dynamic)speaker).Speak("Внимание! Ошибка в работе принтера!",3);
+            if(speaker is not null)((dynamic)speaker).Speak(isStop?"Внимание! Печать остановилась!":"Внимание! Ошибка в работе принтера!",3);
             else player?.Play();
         }
         catch(Exception e) when(e is COMException or InvalidOperationException or IOException or TimeoutException or System.ComponentModel.Win32Exception)

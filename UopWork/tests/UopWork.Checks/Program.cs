@@ -58,6 +58,23 @@ try
     store.Save(store.Load() with{AlarmSoundFile="C:\\sounds\\Ошибка.wav"});
     Check(store.Load().AlarmSoundFile.EndsWith("Ошибка.wav"),"audio settings lost");
     Console.WriteLine("PASS alarms: independent acknowledgement, rotation, new/reappearing errors, unknown reads, confirmed clear, persistent bounded history, audio settings");
+    var clock=new ManualClock();var watch=new LayerWatchdog(clock);
+    var sample=clear with{Printed=100,Total=200,FinishKind="ESTIMATE",File="job/0100.tif",Mode="MainAuto"};
+    void AdvanceSamples(int seconds,Telemetry value){for(int i=0;i<seconds;i++){clock.Advance(1);watch.Observe(value);watch.Tick(true);}}
+    watch.Observe(sample);AdvanceSamples(59,sample);Check(!watch.IsStalled&&watch.Seconds==59,"alarm before 60 seconds");
+    AdvanceSamples(1,sample with{Mode="Pause"});Check(watch.IsStalled,"pause should also trigger at 60 seconds");
+    watch.Observe(sample with{Printed=101});Check(!watch.IsStalled&&watch.Seconds==0,"layer advance did not clear");
+    AdvanceSamples(60,sample with{Printed=101});Check(watch.IsStalled,"second stop did not rearm");
+    watch.Tick(false);Check(!watch.IsStalled&&!watch.IsTracking,"disconnection left local stall active");
+    watch.Observe(sample);clock.Advance(6);watch.Tick(true);Check(!watch.IsTracking,"stale telemetry not suspended");
+    watch.Observe(sample);Check(watch.Seconds==0,"reconnect reused old timer");
+    watch.Observe(sample with{ReadSucceeded=false});Check(!watch.IsTracking,"read failure not suspended");
+    watch.Observe(sample with{Printed=200});Check(!watch.IsTracking,"completed counter armed");
+    watch.Observe(sample with{FinishKind="FINISHED"});Check(!watch.IsTracking,"finished job armed");
+    watch.Observe(sample with{Printed=null});Check(!watch.IsTracking,"missing counter armed");
+    watch.Observe(sample);AdvanceSamples(59,sample);watch.Observe(sample with{File="new-job/0100.tif"});Check(watch.Seconds==0,"new file did not reset");
+    clock.Advance(10);watch.Observe(sample);Check(watch.Seconds==0,"sample gap reused old timer");
+    Console.WriteLine("PASS layer watchdog: exact 60-second threshold, pause included, layer advance, rearm, disconnect, stale/read failure, completed/missing fields, new job, sample gaps");
     var listener=new TcpListener(IPAddress.Loopback,0);listener.Start();
     int port=((IPEndPoint)listener.LocalEndpoint).Port;
     using var stop=new CancellationTokenSource(TimeSpan.FromSeconds(12));
@@ -77,3 +94,11 @@ try
     Console.WriteLine("PASS network: real loopback TCP stream, fragmented UTF-8, cancellation");
 }
 finally{Directory.Delete(root,true);}
+
+sealed class ManualClock : TimeProvider
+{
+    private long seconds;
+    public override long TimestampFrequency=>1;
+    public override long GetTimestamp()=>seconds;
+    public void Advance(int amount)=>seconds+=amount;
+}
