@@ -47,8 +47,10 @@ internal static class Program
                 alarmPrinter.Apply(original with{Alarm="",AlarmRead=true});Check(!alarmPrinter.HasAlarm,"confirmed clear");
                 alarmPrinter.Apply(original);
                 dashboard.Selected=dashboard.Printers[0];Pump();
+                CheckLayout(window);
                 Capture(window,Path.Combine(screenshots,theme+"-1920.png"));
                 window.Width=1366;window.Height=768;Pump();window.UpdateLayout();
+                CheckLayout(window);
                 Capture(window,Path.Combine(screenshots,theme+"-1366.png"));
             }
             var settings=new SettingsStore(Path.Combine(root,"settings.json"));
@@ -62,6 +64,20 @@ internal static class Program
         }
         catch(Exception ex){Console.Error.WriteLine(ex);Console.Error.WriteLine("::error title=Windows WPF check::"+ex.ToString().Replace("%","%25").Replace("\r","%0D").Replace("\n","%0A"));return 1;}
         finally{Directory.Delete(root,true);}
+    }
+    private static void CheckLayout(Window window)
+    {
+        var expected=(SolidColorBrush)window.FindResource("BackgroundBrush");
+        Check(window.Background is SolidColorBrush actual && actual.Color==expected.Color,"window theme background");
+        Check(window.FontSize==14,"window typography");
+        foreach(var name in new[]{"RestartButton","ShutdownButton","UploadButton"})
+        {
+            var button=(Button)window.FindName(name);
+            var label=new FormattedText((string)button.Content,System.Globalization.CultureInfo.CurrentUICulture,FlowDirection.LeftToRight,
+                new Typeface(button.FontFamily,button.FontStyle,button.FontWeight,button.FontStretch),button.FontSize,button.Foreground,VisualTreeHelper.GetDpi(button).PixelsPerDip);
+            Check(button.ActualHeight>=label.Height+button.Padding.Top+button.Padding.Bottom+2,"unclipped footer label: "+name);
+            Check(button.ActualWidth>=label.Width+button.Padding.Left+button.Padding.Right+2,"footer label width: "+name);
+        }
     }
     private static void Check(bool ok,string text){if(!ok)throw new Exception(text);}
     private static void Pump()
