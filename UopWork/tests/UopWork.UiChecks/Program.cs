@@ -64,7 +64,7 @@ internal static class Program
             window.Hide();Console.WriteLine("PASS Windows WPF: resources, three themes, printer selection, alarm binding, admin/password windows, 1920/1366 screenshots");
             return 0;
         }
-        catch(Exception ex){Console.Error.WriteLine(ex);return 1;}
+        catch(Exception ex){Console.Error.WriteLine(ex);Console.Error.WriteLine("::error title=Windows WPF check::"+ex.ToString().Replace("%","%25").Replace("\r","%0D").Replace("\n","%0A"));return 1;}
         finally{Directory.Delete(root,true);}
     }
     private static void Check(bool ok,string text){if(!ok)throw new Exception(text);}
