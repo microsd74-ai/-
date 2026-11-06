@@ -9,6 +9,12 @@ namespace UopWork.Desktop;
 public partial class MainWindow : Window
 {
     private readonly Dashboard dashboard;
+    private readonly AlarmAudio audio=new();
+    private readonly AlarmHistoryStore historyStore;
+    private readonly System.Collections.ObjectModel.ObservableCollection<AlarmHistoryEntry> history=[];
+    private readonly HashSet<PrinterItem> historyAttached=[];
+    private string soundFile="";
+    private bool historyWritable=true;
     private readonly SettingsStore settings;
     private readonly PasswordStore password;
     private readonly Dictionary<Guid,(PrinterItem Item,CancellationTokenSource Stop,Task Task)> connections=[];
@@ -19,11 +25,14 @@ public partial class MainWindow : Window
     {
         var root=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"UopWork");
         if(demo)root=Path.Combine(root,"Demo");
+        historyStore=new(Path.Combine(root,"alarm-history.json"));
+        try{foreach(var entry in historyStore.Load().AsEnumerable().Reverse())history.Add(entry);}
+        catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException){historyWritable=false;}
         settings=new(Path.Combine(root,"settings.json"));password=new(Path.Combine(root,"admin.json"));dashboard=new(demo);
         InitializeComponent();DataContext=dashboard;
         try
         {
-            var saved=settings.Load();theme=saved.Theme;App.SetTheme(theme);
+            var saved=settings.Load();soundFile=saved.AlarmSoundFile;theme=saved.Theme;App.SetTheme(theme);
             ThemePicker.SelectedIndex=theme=="Light"?0:theme=="Terminal"?2:1;
             if(demo)
             {
@@ -38,10 +47,15 @@ public partial class MainWindow : Window
         timer=new DispatcherTimer(TimeSpan.FromSeconds(1),DispatcherPriority.Background,(_,_)=>
         {
             if(dashboard.Demo)foreach(var p in dashboard.Printers.Where(p=>p.Connection!="Нет связи"))if(p.Data is {} data)p.Apply(data with{ReceivedAt=DateTimeOffset.Now});
+            AttachHistory();
             dashboard.Tick();
+            if(!dashboard.Demo){audio.Update(dashboard.Printers.SelectMany(p=>p.Alarms.Active).Where(a=>!a.Acknowledged).Select(a=>a.Id),soundFile);dashboard.SoundStatus=audio.Status;}
+            else dashboard.SoundStatus="Демо: автоматический звук отключён";
+            if(!historyWritable)dashboard.SoundStatus+=" · история не сохраняется: проверьте файл alarm-history.json";
+            dashboard.Refresh();
         },Dispatcher);timer.Start();
         Loaded+=(_,_)=>{Left=0;Top=0;Width=SystemParameters.PrimaryScreenWidth;Height=SystemParameters.PrimaryScreenHeight;};
-        Closed+=(_,_)=>{timer.Stop();foreach(var c in connections.Values)c.Stop.Cancel();};
+        Closed+=(_,_)=>{timer.Stop();audio.Dispose();foreach(var c in connections.Values)c.Stop.Cancel();};
     }
     private void Configure(AppSettings saved)
     {
@@ -52,7 +66,7 @@ public partial class MainWindow : Window
         foreach(var config in saved.Printers)
         {
             if(connections.TryGetValue(config.Id,out var existing)){existing.Item.Config=config;existing.Item.Refresh();ordered.Add(existing.Item);continue;}
-            var item=new PrinterItem(config);var stop=new CancellationTokenSource();
+            var item=new PrinterItem(config);AttachHistory(item);var stop=new CancellationTokenSource();
             var task=AgentConnection.ObserveAsync(config,
                 data=>Dispatcher.BeginInvoke(new Action(()=>{if(connections.TryGetValue(config.Id,out var current)&&ReferenceEquals(current.Item,item))item.Apply(data);})),
                 status=>Dispatcher.BeginInvoke(new Action(()=>{item.Connection=status;item.AddEvent(status);item.Refresh();})),stop.Token);
@@ -76,14 +90,30 @@ public partial class MainWindow : Window
         try
         {
             var auth=new PasswordWindow(password,false){Owner=this};if(auth.ShowDialog()!=true)return;
-            var admin=new ManagementWindow(settings,password,()=>{if(!dashboard.Demo)Configure(settings.Load());else{dashboard.Printers.Clear();dashboard.LoadDemo(settings.Load().Printers);}},dashboard.Printers){Owner=this};
+            var admin=new ManagementWindow(settings,password,()=>{soundFile=settings.Load().AlarmSoundFile;if(!dashboard.Demo)Configure(settings.Load());else{dashboard.Printers.Clear();dashboard.LoadDemo(settings.Load().Printers);}},dashboard.Printers){Owner=this};
             admin.ShowDialog();if(admin.ExitRequested){allowExit=true;Close();}
         }
         catch(Exception ex) when(ex is IOException or ArgumentException or System.Text.Json.JsonException)
         {MessageBox.Show(this,ex.Message,"Управление");}
         finally{managementOpen=false;}
     }
-    private void AcknowledgeClick(object sender,RoutedEventArgs e){if(sender is Button{Tag:PrinterItem item})item.Acknowledge();}
+    private void AcknowledgeClick(object sender,RoutedEventArgs e){if(sender is Button{Tag:AlarmCard item}){item.Acknowledge();dashboard.Refresh();if(!dashboard.Demo)audio.Update(dashboard.Printers.SelectMany(p=>p.Alarms.Active).Where(a=>!a.Acknowledged).Select(a=>a.Id),soundFile);}}
+    private void AttachHistory(){foreach(var p in dashboard.Printers)AttachHistory(p);}
+    private void AttachHistory(PrinterItem item)
+    {
+        if(!historyAttached.Add(item))return;
+        item.Alarms.Changed+=change=>
+        {
+            history.Insert(0,new(item.Config.Id,item.Name,change));
+            while(history.Count>AlarmHistoryStore.Limit)history.RemoveAt(history.Count-1);
+            if(historyWritable)
+            {
+                try{historyStore.Save(history.Reverse());}
+                catch(Exception ex) when(ex is IOException or UnauthorizedAccessException){historyWritable=false;}
+            }
+        };
+    }
+    private void HistoryClick(object sender,RoutedEventArgs e)=>new AlarmHistoryWindow(history){Owner=this}.ShowDialog();
     private void WindowClosing(object? sender,CancelEventArgs e)
     {
         if(allowExit)return;e.Cancel=true;

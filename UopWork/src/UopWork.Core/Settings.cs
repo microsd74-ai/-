@@ -20,9 +20,11 @@ public sealed record PrinterConfig(Guid Id, string Name, string Host, int Port =
 }
 public sealed record AppSettings(string Theme, List<PrinterConfig> Printers)
 {
+    public string AlarmSoundFile { get; init; } = "";
     public static AppSettings Empty => new("Dark", []);
     public AppSettings Validate()
     {
+        if (AlarmSoundFile is null || AlarmSoundFile.Length > 1024) throw new ArgumentException("Неверный путь звукового файла.");
         if (Theme is not ("Light" or "Dark" or "Terminal")) throw new ArgumentException("Неизвестная тема оформления.");
         if (Printers is null || Printers.Any(p => p is null)) throw new ArgumentException("Повреждён список принтеров.");
         if (Printers.Count > 128) throw new ArgumentException("Поддерживается до 128 принтеров.");

@@ -57,6 +57,7 @@ public partial class ManagementWindow : Window
         Commit(imported.ToList());
     });
     private void ChangePassword(object sender,RoutedEventArgs e)=>new PasswordWindow(password,true){Owner=this}.ShowDialog();
+    private void AudioSettings(object sender,RoutedEventArgs e)=>new AudioSettingsWindow(settings,changed){Owner=this}.ShowDialog();
     private void Events(object sender,RoutedEventArgs e)
     {
         var body=new System.Windows.Controls.TextBox{IsReadOnly=true,TextWrapping=TextWrapping.Wrap,VerticalScrollBarVisibility=System.Windows.Controls.ScrollBarVisibility.Auto,Text=string.Join("\n\n",states.Select(p=>p.Name+"\n"+string.Join("\n",p.Events)))};

@@ -5,7 +5,7 @@ function Get-FhzlMatch([string]$Text,[string]$Pattern) {
     return ''
 }
 function Convert-FhzlSnapshot {
-    param([string]$PrintText='', [string]$FileText='', [string]$Alarm='', [string[]]$StatusLines=@(), [string]$LogTail='', [string]$LogState='unavailable')
+    param([string]$PrintText='', [string]$FileText='', [string]$Alarm='', [string[]]$StatusLines=@(), [string]$LogTail='', [string]$LogState='unavailable', [bool]$AlarmRead=$false)
     $kind=''
     if ($PrintText -match '(?i)Estimate(?:d)?\s+Finished\s*time') { $kind='ESTIMATE' }
     elseif ($PrintText -match '(?i)Finished\s*time') { $kind='FINISHED' }
@@ -15,7 +15,7 @@ function Convert-FhzlSnapshot {
     $start=Get-FhzlMatch $PrintText '(?im)^\s*Start\s*time\s*:\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})'
     $duration=Get-FhzlMatch $PrintText '(?im)^\s*Total\s*time\s*:\s*(\d+:\d{2}:\d{2})'
     $extra=[ordered]@{
-        alarm=$Alarm
+        alarm=$Alarm; alarmRead=$AlarmRead
         file=Get-FhzlMatch $FileText '(?im)^\s*File\s+path\s*:\s*(.+)$'
         parameters=Get-FhzlMatch $PrintText '(?im)^\s*Parameter\s*:\s*(.+)$'
         layerSeconds=Get-FhzlMatch $PrintText '(?im)^\s*Layer\s+seconds\(Avg\.\)\s*:\s*([\d.]+)'
@@ -47,4 +47,21 @@ function Convert-FhzlSnapshot {
         $line=@('OK','STATE',$kind,$finish,$printed,$total,$start,$duration) -join '|'
     }
     return @{line=$line; extra=$extra}
+}
+
+# Match the observed FHZL toolbar structure. An absent label is NOT a clear.
+# Name/class reads must all have succeeded before calling this helper.
+function Get-FhzlToolbarAlarm {
+    param([object[]]$Items=@())
+    foreach ($item in $Items) {
+        if ($item.name -match '^\d+/\d+:') { return @{text=[string]$item.name; read=$true} }
+    }
+    for ($i=0; $i -lt $Items.Count-3; $i++) {
+        if ($Items[$i].name -eq 'Exit' -and $Items[$i].class -eq 'QToolButton' -and
+            $Items[$i+1].class -eq 'QToolBarSeparator' -and $Items[$i+2].class -eq 'QLabel' -and
+            $Items[$i+3].class -eq 'QToolBarSeparator' -and [string]::IsNullOrWhiteSpace($Items[$i+2].name)) {
+            return @{text=''; read=$true}
+        }
+    }
+    return @{text=''; read=$false}
 }

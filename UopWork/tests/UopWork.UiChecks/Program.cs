@@ -58,6 +58,11 @@ internal static class Program
             var password=new PasswordStore(Path.Combine(root,"admin.json"));
             var login=new PasswordWindow(password,false);login.Show();Pump();Check(login.WindowStyle==WindowStyle.None,"borderless password window");Capture(login,Path.Combine(screenshots,"password-setup.png"));login.Close();
             var admin=new ManagementWindow(settings,password,()=>{},dashboard.Printers);admin.Show();Pump();Check(admin.WindowStyle==WindowStyle.None,"borderless management window");Capture(admin,Path.Combine(screenshots,"management.png"));admin.Close();
+            var audioWindow=new AudioSettingsWindow(settings,()=>{});audioWindow.Show();Pump();
+            Check(audioWindow.WindowStyle==WindowStyle.None,"borderless audio window");Capture(audioWindow,Path.Combine(screenshots,"audio-settings.png"));audioWindow.Close();
+            var history=new System.Collections.ObjectModel.ObservableCollection<AlarmHistoryEntry>{new(Guid.NewGuid(),"Принтер Ж",new(DateTimeOffset.Now,"Появление",Guid.NewGuid(),"Тестовая ошибка"))};
+            var historyWindow=new AlarmHistoryWindow(history);historyWindow.Show();Pump();Capture(historyWindow,Path.Combine(screenshots,"alarm-history.png"));historyWindow.Close();
+            using(var audio=new AlarmAudio()){audio.Update([],"");Check(audio.Status.Length>0,"audio fallback initialization");audio.Update([],"Z:\\missing-uop-recording.wav");Check(audio.Status.Contains("Запись недоступна"),"missing recording fallback");}
             Check(log.Errors.Count==0,"WPF binding errors: "+string.Join("\n",log.Errors));
             window.Hide();Console.WriteLine("PASS Windows WPF: resources, three themes, printer selection, alarm binding, admin/password windows, 1920/1366 screenshots");
             return 0;

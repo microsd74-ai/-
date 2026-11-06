@@ -39,7 +39,7 @@ function Get-FhzlLogTail($Log) {
     return @{text=''; state=$state; source=''}
 }
 function Get-PrinterTelemetry {
-    $extra=[ordered]@{alarm=''; logTail=''; logState='unavailable'}
+    $extra=[ordered]@{alarm=''; alarmRead=$false; logTail=''; logState='unavailable'}
     try {
         if ($null -ne $script:FhzlWindow) { [void](Read-FhzlName $script:FhzlWindow) }
         if ($null -eq $script:FhzlWindow) {
@@ -55,11 +55,17 @@ function Get-PrinterTelemetry {
         $print=Read-FhzlName (Find-FhzlElement 'WinPrintManage.centralwidget.lblPrintInfo')
         $file=Read-FhzlName (Find-FhzlElement 'WinPrintManage.centralwidget.lblFileInfo')
         $toolbar=Find-FhzlElement 'WinPrintManage.mainToolBar'
-        $alarm=''
+        $alarm=''; $alarmRead=$false
         if ($null -ne $toolbar) {
-            foreach ($e in $toolbar.FindAll([System.Windows.Automation.TreeScope]::Children,[System.Windows.Automation.Condition]::TrueCondition)) {
-                try { $s=Read-FhzlName $e; if ($s -match '^\d+/\d+:') { $alarm=$s; break } } catch { }
-            }
+            try {
+                $items=@()
+                foreach ($e in $toolbar.FindAll([System.Windows.Automation.TreeScope]::Children,[System.Windows.Automation.Condition]::TrueCondition)) {
+                    $current=Read-FhzlProperty $e 'Current'
+                    $items+=@{name=[string](Read-FhzlProperty $current 'Name'); class=[string](Read-FhzlProperty $current 'ClassName')}
+                }
+                $read=Get-FhzlToolbarAlarm -Items $items
+                $alarm=$read.text; $alarmRead=$read.read
+            } catch { $alarmRead=$false }
         }
         $status=Find-FhzlElement 'WinPrintManage.statusbar'
         $statusLines=@()
@@ -76,7 +82,7 @@ function Get-PrinterTelemetry {
                 $tail=$read.text; $logState=$read.state
             }
         } catch { $logState='read_error' }
-        return Convert-FhzlSnapshot -PrintText $print -FileText $file -Alarm $alarm -StatusLines $statusLines -LogTail $tail -LogState $logState
+        return Convert-FhzlSnapshot -PrintText $print -FileText $file -Alarm $alarm -AlarmRead $alarmRead -StatusLines $statusLines -LogTail $tail -LogState $logState
     } catch {
         $script:FhzlWindow=$null
         return @{line='ERROR|READ_FAILED'; extra=$extra}

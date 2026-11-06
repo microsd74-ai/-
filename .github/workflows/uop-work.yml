@@ -5,6 +5,8 @@ on:
     paths:
       - 'UopWork/**'
       - '.github/workflows/uop-work.yml'
+      - 'FHZLFleet/Agent/**'
+      - 'FHZLFleet/tests/alarm_read_smoke.ps1'
 permissions:
   contents: read
 jobs:
@@ -24,6 +26,9 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: UopWork/global.json
+      - name: Agent alarm source checks
+        shell: powershell
+        run: ../FHZLFleet/tests/alarm_read_smoke.ps1
       - name: Core checks
         run: dotnet run --project tests/UopWork.Checks -c Release
       - name: Windows interface checks and screenshots
@@ -36,6 +41,9 @@ jobs:
           Copy-Item Start-Demo.cmd artifacts/UopWork/
           Copy-Item README.md artifacts/UopWork/README.md
           Copy-Item docs artifacts/UopWork/docs -Recurse
+          New-Item -ItemType Directory artifacts/UopWork/Agent-update -Force
+          Copy-Item ../FHZLFleet/Agent/ReadPrinter.ps1, ../FHZLFleet/Agent/ParsePrinter.ps1 artifacts/UopWork/Agent-update/
+          Copy-Item docs/agent-update.md artifacts/UopWork/Agent-update/README.md
       - uses: actions/upload-artifact@v5
         if: always()
         with:
