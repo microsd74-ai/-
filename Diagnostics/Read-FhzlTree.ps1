@@ -49,7 +49,7 @@ try {
             $entry=$stack.Pop()
             $element=$entry.element
             $id=$result.nodes+1
-            $record=[ordered]@{id=$id; parent=$entry.parent; path=$entry.path; depth=$entry.depth; name=''; automationId=''; className=''; controlType=''; isOffscreen=$null; processId=0; bounds=''; patterns=@(); value=''; text=''; error=''; passwordSkipped=$false}
+            $record=[ordered]@{id=$id; parent=$entry.parent; path=$entry.path; depth=$entry.depth; name=''; automationId=''; className=''; controlType=''; isOffscreen=$null; processId=0; bounds=''; patterns=@(); value=''; text=''; textTail=''; error=''; passwordSkipped=$false}
             try {
                 $current=Read-Property $element 'Current'
                 if (Read-Property $current 'IsPassword') {
@@ -78,6 +78,11 @@ try {
                         if ($element.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern,[ref]$pattern)) {
                             $record.text=[string]$pattern.DocumentRange.GetText(8192)
                             if ($record.text.Length -ge 8192) { $result.limited=$true }
+                            # Read the end of the document without scrolling or selecting.
+                            $range=$pattern.DocumentRange.Clone()
+                            $range.MoveEndpointByRange([System.Windows.Automation.TextPatternRangeEndpoint]::Start,$range,[System.Windows.Automation.TextPatternRangeEndpoint]::End)
+                            [void]$range.MoveEndpointByUnit([System.Windows.Automation.TextPatternRangeEndpoint]::Start,[System.Windows.Automation.TextUnit]::Character,-8192)
+                            $record.textTail=$range.GetText(8192)
                         }
                     } catch { $result.errors++ }
                 }
@@ -90,7 +95,7 @@ try {
             $budget-=$utf8.GetByteCount($line)
             $text.WriteLine(('  '*$entry.depth)+"[$id] "+$record.controlType+' class='+$record.className+' automationId='+$record.automationId)
             if ($record.passwordSkipped) { $text.WriteLine('  [Password field omitted]') }
-            foreach ($field in @('name','value','text','error')) {
+            foreach ($field in @('name','value','text','textTail','error')) {
                 if ($record[$field]) { $text.WriteLine('  '+$field+': '+$record[$field]) }
             }
             $result.nodes++

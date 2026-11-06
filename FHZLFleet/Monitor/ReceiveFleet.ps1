@@ -40,6 +40,15 @@ try {
                             foreach ($field in @('finishKind','finish','printed','total','start','duration','detail')) {
                                 if ($m.$field -isnot [string] -or $m.$field.Length -gt 2048) { throw 'Invalid field' }
                             }
+                            if ($m.PSObject.Properties.Name -contains 'extra') {
+                                if ($m.extra -isnot [pscustomobject]) { throw 'Invalid extra data' }
+                                foreach ($property in $m.extra.PSObject.Properties) {
+                                    if ($property.Name -notin @('alarm','file','parameters','layerSeconds','layerAverage','temperature','humidity','axes','modes','plcLabels','logTail','logState')) { throw 'Unknown extra field' }
+                                    $limit=500
+                                    if ($property.Name -eq 'logTail') { $limit=3000 }
+                                    if ($property.Value -isnot [string] -or $property.Value.Length -gt $limit) { throw 'Invalid extra field' }
+                                }
+                            }
                             $c.last=[DateTime]::UtcNow
                             Publish $m
                         } else {

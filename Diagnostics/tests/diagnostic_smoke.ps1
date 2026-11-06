@@ -17,6 +17,8 @@ using System;
 using System.Collections.Generic;
 namespace System.Windows.Automation {
     public enum TreeScope { Children }
+    public enum TextPatternRangeEndpoint { Start, End }
+    public enum TextUnit { Character }
     public class Condition { public static object TrueCondition = new object(); }
     public class ValuePattern { public static string Pattern = "Value"; }
     public class TextPattern { public static string Pattern = "Text"; }
@@ -35,7 +37,12 @@ namespace System.Windows.Automation {
     public class MockValue { public ValueData Current {get; set;} = new ValueData(); }
     public class Range {
         public string Text;
-        public string GetText(int n) { return Text.Substring(0,Math.Min(n,Text.Length)); }
+        public int Start=0, End=-1;
+        private int Limit { get { return End<0 ? Text.Length : End; } }
+        public string GetText(int n) { return Text.Substring(Start,Math.Min(n,Limit-Start)); }
+        public Range Clone() { return new Range { Text=Text, Start=Start, End=Limit }; }
+        public void MoveEndpointByRange(TextPatternRangeEndpoint a,Range b,TextPatternRangeEndpoint c) { Start=b.Limit; }
+        public int MoveEndpointByUnit(TextPatternRangeEndpoint a,TextUnit u,int n) { int old=Start; Start=Math.Max(0,Start+n); return Start-old; }
     }
     public class MockText { public Range DocumentRange = new Range(); }
     public class AutomationElement {
@@ -63,7 +70,7 @@ namespace System.Windows.Automation {
             var pressure=window.Add(new AutomationElement("Channel 1"));
             pressure.Value=new MockValue(); pressure.Value.Current.Value="-5.76";
             var log=window.Add(new AutomationElement("System Run Log"));
-            log.Text=new MockText(); log.Text.DocumentRange.Text="Warning [5484]: Not set Home alarm";
+            log.Text=new MockText(); log.Text.DocumentRange.Text="Warning [5484]: Not set Home alarm"+new string('x',9000)+"\n[2026-11-06 17:15:00] Latest event";
             var password=window.Add(new AutomationElement("SECRET")); password.Props.IsPassword=true;
             password.Add(new AutomationElement("CHILD_SECRET"));
             window.Add(new AutomationElement("Gone" )).Gone=true;
@@ -100,6 +107,7 @@ namespace System.Windows.Automation {
     if ($result.status -ne 'partial' -or $records.Count -ne 6 -or $result.errors -lt 1) { throw ('Expected six nodes and an inaccessible-element error: '+($result | ConvertTo-Json -Compress)) }
     if (-not ($records | Where-Object { $_.value -eq '-5.76' })) { throw 'Missing ValuePattern data' }
     if (-not ($records | Where-Object { $_.text -like '*5484*' })) { throw 'Missing TextPattern data' }
+    if (-not ($records | Where-Object { $_.textTail -like '*Latest event*' -and $_.text -notlike '*Latest event*' })) { throw 'Log tail was not captured independently of its beginning' }
     if ((Get-Content -LiteralPath (Join-Path $out 'elements.jsonl') -Raw) -match 'SECRET|Unrelated application') { throw 'Private/unrelated data captured' }
     foreach ($record in $records) {
         if ($record.parent -ne 0 -and -not ($records | Where-Object { $_.id -eq $record.parent })) { throw 'Missing parent record' }

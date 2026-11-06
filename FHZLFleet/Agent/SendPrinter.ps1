@@ -15,7 +15,11 @@ function Publish($value) {
 try {
     . (Join-Path $PSScriptRoot 'ReadPrinter.ps1')
     while ($true) {
-            $line = Get-PrinterState
+            $extra=$null
+            if (Get-Command Get-PrinterTelemetry -ErrorAction SilentlyContinue) {
+                $snapshot=Get-PrinterTelemetry
+                $line=$snapshot.line; $extra=$snapshot.extra
+            } else { $line = Get-PrinterState }
             $parts = $line -split '\|'
             $message = [ordered]@{
                 type='telemetry'; version=1; id=$PrinterId; name=$PrinterName
@@ -28,6 +32,7 @@ try {
                 $message.printed=$parts[4]; $message.total=$parts[5]
                 $message.start=$parts[6]; $message.duration=$parts[7]
             }
+            if ($null -ne $extra) { $message['extra']=$extra }
             if ($null -eq $client -and [DateTime]::UtcNow -ge $nextConnect) {
                 try {
                     $client = [System.Net.Sockets.TcpClient]::new()
@@ -44,7 +49,11 @@ try {
             $sent = $false
             if ($null -ne $client) {
                 try {
-                    $bytes = [System.Text.Encoding]::UTF8.GetBytes(($message | ConvertTo-Json -Compress) + "`n")
+                    $bytes = [System.Text.Encoding]::UTF8.GetBytes(($message | ConvertTo-Json -Compress -Depth 4) + "`n")
+                    if ($bytes.Length -gt 16000 -and $null -ne $extra) {
+                        $extra.logTail=''; $extra.logState='omitted_by_size'
+                        $bytes = [System.Text.Encoding]::UTF8.GetBytes(($message | ConvertTo-Json -Compress -Depth 4) + "`n")
+                    }
                     $client.GetStream().Write($bytes, 0, $bytes.Length)
                     $sent = $true
                 } catch {

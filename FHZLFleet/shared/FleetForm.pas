@@ -13,13 +13,16 @@ type
     RunButton: TButton;
     StateLabel: TLabel;
     Grid: TStringGrid;
-    Log: TMemo;
+    Log, Details: TMemo;
+    DetailText: array of string;
     Pending: string;
     LastSeen: array of QWord;
     procedure StartClick(Sender: TObject);
     procedure Poll(Sender: TObject);
     procedure HandleLine(const Line: string);
     procedure AddLog(const S: string);
+    procedure ShowDetails(Sender: TObject);
+    function FormatDetails(O: TJSONObject): string;
     function AddEdit(const Title, Value: string; X, W: Integer): TEdit;
   public
     constructor Create(AOwner: TComponent); override;
@@ -40,7 +43,7 @@ const Headers: array[0..8] of string = ('ID', 'Принтер', 'Состоян�
   'Окончание', 'Тип окончания', 'Начало', 'Длительность', 'Получено');
 begin
   inherited CreateNew(AOwner);
-  Width := 1120; Height := 620; Position := poScreenCenter;
+  Width := 1120; Height := 820; Constraints.MinWidth := 1060; Constraints.MinHeight := 760; Position := poScreenCenter;
   Caption := 'FHZL — общий монитор';
   if AgentMode then Caption := 'FHZL — сборщик показателей';
   C := TIniFile.Create(ChangeFileExt(Application.ExeName, '.ini'));
@@ -60,8 +63,13 @@ begin
   Grid.Anchors := [akLeft, akTop, akRight]; Grid.ColCount := 9; Grid.RowCount := 2;
   Grid.FixedRows := 1; Grid.FixedCols := 0; Grid.DefaultColWidth := 145;
   for I := 0 to 8 do Grid.Cells[I,0] := Headers[I];
-  Grid.ColWidths[2] := 300; SetLength(LastSeen, 2);
-  Log := TMemo.Create(Self); Log.Parent := Self; Log.SetBounds(12, 390, 1070, 170);
+  Grid.ColWidths[2] := 360; SetLength(LastSeen, 2); SetLength(DetailText, 2);
+  Grid.OnClick := @ShowDetails;
+  Details := TMemo.Create(Self); Details.Parent := Self;
+  Details.SetBounds(12, 385, 1070, 220); Details.Anchors := [akLeft, akTop, akRight];
+  Details.ReadOnly := True; Details.ScrollBars := ssAutoBoth;
+  Details.Text := 'Выберите принтер в таблице для просмотра показателей и конца журнала.';
+  Log := TMemo.Create(Self); Log.Parent := Self; Log.SetBounds(12, 620, 1070, 140);
   Log.Anchors := [akLeft, akTop, akRight, akBottom]; Log.ReadOnly := True; Log.ScrollBars := ssAutoVertical;
   Tick := TTimer.Create(Self); Tick.Interval := 100; Tick.OnTimer := @Poll;
 end;
@@ -128,10 +136,15 @@ begin
     R := 0;
     for I := 1 to Grid.RowCount-1 do if Grid.Cells[0,I] = ID then begin R := I; Break end;
     if R = 0 then begin
-      if Grid.Cells[0,1] = '' then R := 1 else begin R := Grid.RowCount; Grid.RowCount := R+1; SetLength(LastSeen, R+1) end;
+      if Grid.Cells[0,1] = '' then R := 1 else begin R := Grid.RowCount; Grid.RowCount := R+1; SetLength(LastSeen, R+1); SetLength(DetailText, R+1) end;
       Grid.Cells[0,R] := ID;
     end;
     Status := 'Показатели получены';
+    DetailText[R] := FormatDetails(O);
+    if Grid.Row = R then ShowDetails(Self);
+    if (O.Find('extra') is TJSONObject) then
+      if TJSONObject(O.Find('extra')).Get('alarm','') <> '' then
+        Status := UTF8String('Сообщение FHZL: ') + TJSONObject(O.Find('extra')).Get('alarm','');
     if O.Get('state','') <> 'ok' then begin
       Status := O.Get('detail',UTF8String('Ошибка чтения'));
       if Pos('WINDOW_NOT_FOUND',Status)>0 then Status := 'Окно FHZL не найдено'
@@ -153,6 +166,42 @@ begin
     if OldStatus <> Status then AddLog(Grid.Cells[1,R] + ': ' + Status);
   except on E: Exception do AddLog(UTF8String('Не удалось разобрать ответ: ') + Copy(Line,1,200)) end;
   finally Data.Free end;
+end;
+procedure TFleetForm.ShowDetails(Sender: TObject);
+var S: string; R: Integer;
+begin
+  R := Grid.Row;
+  if (R < 1) or (R > High(DetailText)) or (DetailText[R] = '') then Exit;
+  S := DetailText[R];
+  if (LastSeen[R] <> 0) and (GetTickCount64 - LastSeen[R] > 5000) then
+    S := UTF8String('ВНИМАНИЕ: данные устарели.') + LineEnding + S;
+  if Details.Text <> S then Details.Text := S;
+end;
+function TFleetForm.FormatDetails(O: TJSONObject): string;
+var E: TJSONObject; L: TStringList;
+  procedure Field(const Title, Key: string);
+  var V: string;
+  begin
+    V := E.Get(Key, ''); if V = '' then V := UTF8String('недоступно');
+    L.Add(Title + ': ' + V);
+  end;
+begin
+  Result := UTF8String('Этот сборщик передаёт только основные показатели. Обновите его для подробных данных.');
+  if not (O.Find('extra') is TJSONObject) then Exit;
+  E := TJSONObject(O.Find('extra')); L := TStringList.Create;
+  try
+    Field('Сообщение FHZL (как в верхней строке)', 'alarm');
+    Field('Файл (как показывает FHZL)', 'file'); Field('Параметры печати', 'parameters');
+    Field('Секунд на слой', 'layerSeconds'); Field('Среднее секунд на слой', 'layerAverage');
+    Field('Температура', 'temperature'); Field('Влажность', 'humidity');
+    Field('Координаты', 'axes'); Field('Режимы', 'modes'); Field('Текст меток PLC', 'plcLabels');
+    L.Add('Давление каналов и цвета индикаторов пока не считываются.');
+    L.Add(''); L.Add('Последние строки журнала FHZL (история, не список текущих аварий):');
+    L.Add(E.Get('logTail', ''));
+    if E.Get('logState','') <> 'tail' then
+      L.Add(UTF8String('Конец журнала недоступен: ') + E.Get('logState','unavailable'));
+    Result := L.Text;
+  finally L.Free end;
 end;
 procedure TFleetForm.Poll(Sender: TObject);
 var B: array[0..4095] of Byte; N, P, I: Integer; Part, Line: string;
@@ -182,6 +231,7 @@ begin
         AddLog(Grid.Cells[1,I]+UTF8String(': нет свежих данных'));
       Grid.Cells[2,I] := UTF8String('Нет свежих данных — связь или сборщик недоступны');
     end;
+  ShowDetails(Self);
 end;
 destructor TFleetForm.Destroy;
 begin

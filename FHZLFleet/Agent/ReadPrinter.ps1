@@ -1,132 +1,67 @@
 ﻿Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
-
-$intervalMs = 1000
-
-$desktop = [System.Windows.Automation.AutomationElement]::RootElement
-
-$script:printer = $null
-$script:infoElement = $null
-
-function Get-MatchedValue {
-    param(
-        [string]$Text,
-        [string]$Pattern
-    )
-
-    $match = [regex]::Match($Text, $Pattern)
-
-    if ($match.Success) {
-        return $match.Groups[1].Value.Trim()
-    }
-
-    return ""
+. (Join-Path $PSScriptRoot 'ParsePrinter.ps1')
+$script:FhzlWindow=$null
+function Read-FhzlProperty($Object,[string]$Name) {
+    if ($null -eq $Object) { throw 'Unavailable element' }
+    return $Object.GetType().GetProperty($Name).GetValue($Object,$null)
 }
-
-function Get-PrinterState {
-
+function Find-FhzlElement([string]$Id) {
+    $condition=[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty,$Id)
+    return $script:FhzlWindow.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
+}
+function Read-FhzlName($Element) {
+    if ($null -eq $Element) { return '' }
+    return [string](Read-FhzlProperty (Read-FhzlProperty $Element 'Current') 'Name')
+}
+function Get-PrinterTelemetry {
+    $extra=[ordered]@{alarm=''; logTail=''; logState='unavailable'}
     try {
-        if ($null -eq $script:printer) {
-            $windows = $desktop.FindAll(
-                [System.Windows.Automation.TreeScope]::Children,
-                [System.Windows.Automation.Condition]::TrueCondition
-            )
-
+        if ($null -ne $script:FhzlWindow) { [void](Read-FhzlName $script:FhzlWindow) }
+        if ($null -eq $script:FhzlWindow) {
+            $desktop=[System.Windows.Automation.AutomationElement]::RootElement
+            $windows=$desktop.FindAll([System.Windows.Automation.TreeScope]::Children,[System.Windows.Automation.Condition]::TrueCondition)
             foreach ($window in $windows) {
                 try {
-                    if ($window.Current.Name -match "FHZLPrinterManager") {
-                        $script:printer = $window
-                        break
-                    }
-                }
-                catch {
-                    continue
-                }
+                    if ((Read-FhzlName $window) -match 'FHZLPrinterManager') { $script:FhzlWindow=$window; break }
+                } catch { }
             }
         }
-
-        if ($null -eq $script:printer) {
-            return "ERROR|WINDOW_NOT_FOUND"
-        }
-        else {
-            if ($null -eq $script:infoElement) {
-                $elements = $script:printer.FindAll(
-                    [System.Windows.Automation.TreeScope]::Descendants,
-                    [System.Windows.Automation.Condition]::TrueCondition
-                )
-
-                foreach ($element in $elements) {
-                    try {
-                        if ($element.Current.Name -match "Finished\s*time") {
-                            $script:infoElement = $element
-                            break
-                        }
-                    }
-                    catch {
-                        continue
-                    }
-                }
-            }
-
-            if ($null -eq $script:infoElement) {
-                return "ERROR|TEXT_NOT_FOUND"
-            }
-            else {
-                $text = $script:infoElement.Current.Name
-
-                if ($text -notmatch "Finished\s*time") {
-                    $script:infoElement = $null
-                    return "ERROR|TEXT_NOT_FOUND"
-                }
-                else {
-                    $kind = "FINISHED"
-
-                    if ($text -match "Estimate(?:d)?\s+Finished\s*time") {
-                        $kind = "ESTIMATE"
-                    }
-
-                    # Date and time may be on separate lines.
-                    $endTime = Get-MatchedValue $text `
-                        '(?im)^\s*(?:Estimate(?:d)?\s+)?Finished\s*time\s*:\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})'
-
-                    # Normalize line breaks between date and time.
-                    $endTime = $endTime -replace '\s+', ' '
-
-                    $printed = Get-MatchedValue $text `
-                        '(?im)^\s*Printed\s*/\s*Total\s*:\s*(\d+)\s*/\s*\d+'
-
-                    $total = Get-MatchedValue $text `
-                        '(?im)^\s*Printed\s*/\s*Total\s*:\s*\d+\s*/\s*(\d+)'
-
-                    $startTime = Get-MatchedValue $text `
-                        '(?im)^\s*Start\s*time\s*:\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})'
-
-                    $startTime = $startTime -replace '\s+', ' '
-
-                    $duration = Get-MatchedValue $text `
-                        '(?im)^\s*Total\s*time\s*:\s*(\d+:\d{2}:\d{2})'
-
-                    $fields = @(
-                        "OK"
-                        "STATE"
-                        $kind
-                        $endTime
-                        $printed
-                        $total
-                        $startTime
-                        $duration
-                    )
-
-                    return ($fields -join "|")
-                }
+        if ($null -eq $script:FhzlWindow) { return @{line='ERROR|WINDOW_NOT_FOUND'; extra=$extra} }
+        $print=Read-FhzlName (Find-FhzlElement 'WinPrintManage.centralwidget.lblPrintInfo')
+        $file=Read-FhzlName (Find-FhzlElement 'WinPrintManage.centralwidget.lblFileInfo')
+        $toolbar=Find-FhzlElement 'WinPrintManage.mainToolBar'
+        $alarm=''
+        if ($null -ne $toolbar) {
+            foreach ($e in $toolbar.FindAll([System.Windows.Automation.TreeScope]::Children,[System.Windows.Automation.Condition]::TrueCondition)) {
+                try { $s=Read-FhzlName $e; if ($s -match '^\d+/\d+:') { $alarm=$s; break } } catch { }
             }
         }
+        $status=Find-FhzlElement 'WinPrintManage.statusbar'
+        $statusLines=@()
+        if ($null -ne $status) {
+            foreach ($e in $status.FindAll([System.Windows.Automation.TreeScope]::Children,[System.Windows.Automation.Condition]::TrueCondition)) {
+                try { $statusLines+=Read-FhzlName $e } catch { }
+            }
+        }
+        $tail=''; $logState='unavailable'
+        try {
+            $log=Find-FhzlElement 'WinPrintManage.dockWidgetLog.LogBrowserDialog.tabWidget.qt_tabwidget_stackedwidget.tab.txtLog'
+            if ($null -ne $log) {
+                $pattern=$null
+                if ($log.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern,[ref]$pattern)) {
+                    $range=$pattern.DocumentRange.Clone()
+                    $range.MoveEndpointByRange([System.Windows.Automation.TextPatternRangeEndpoint]::Start,$range,[System.Windows.Automation.TextPatternRangeEndpoint]::End)
+                    [void]$range.MoveEndpointByUnit([System.Windows.Automation.TextPatternRangeEndpoint]::Start,[System.Windows.Automation.TextUnit]::Character,-6000)
+                    $tail=$range.GetText(6000); $logState='tail'
+                }
+            }
+        } catch { $logState='read_error' }
+        return Convert-FhzlSnapshot -PrintText $print -FileText $file -Alarm $alarm -StatusLines $statusLines -LogTail $tail -LogState $logState
+    } catch {
+        $script:FhzlWindow=$null
+        return @{line='ERROR|READ_FAILED'; extra=$extra}
     }
-    catch {
-        $script:printer = $null
-        $script:infoElement = $null
-
-        return "ERROR|READ_FAILED"
-    }
-
 }
+# Compatibility for earlier callers.
+function Get-PrinterState { return (Get-PrinterTelemetry).line }

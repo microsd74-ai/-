@@ -63,7 +63,7 @@ def main():
             folder.mkdir()
             shutil.copyfile(ROOT/'Agent/SendPrinter.ps1', folder/'SendPrinter.ps1')
             (folder/'ReadPrinter.ps1').write_text(
-                "function Get-PrinterState { return 'OK|STATE|ESTIMATE|2026-11-05 15:30:00|10|100|2026-11-05 10:00:00|05:30:00' }\n",
+                "function Get-PrinterTelemetry { return @{line='OK|STATE|ESTIMATE|2026-11-05 15:30:00|10|100|2026-11-05 10:00:00|05:30:00'; extra=@{alarm='1/1:Test alarm'; temperature='24.67'; logTail='[2026-11-06 17:15:00] Warning: sample'; logState='tail'}} }\n",
                 encoding='utf-8-sig')
             launch(folder/'SendPrinter.ps1', '-Server', '127.0.0.1', '-Port', port,
                    '-PrinterId', f'printer-{i}', '-PrinterName', f'Принтер {i}')
@@ -71,6 +71,7 @@ def main():
         while len(seen) < 2:
             m = receive(output, lambda m: m.get('type') == 'telemetry')
             assert m['printed'] == '10' and m['total'] == '100'
+            assert m['extra']['alarm'] == '1/1:Test alarm' and m['extra']['temperature'] == '24.67'
             assert m['name'] == 'Принтер ' + m['id'][-1]
             seen.add(m['id'])
         print('PASS: two actual senders, concurrent reception, Unicode names and field values')
