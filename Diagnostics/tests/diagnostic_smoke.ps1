@@ -71,6 +71,7 @@ namespace System.Windows.Automation {
             pressure.Value=new MockValue(); pressure.Value.Current.Value="-5.76";
             var log=window.Add(new AutomationElement("System Run Log"));
             log.Text=new MockText(); log.Text.DocumentRange.Text="Warning [5484]: Not set Home alarm"+new string('x',9000)+"\n[2026-11-06 17:15:00] Latest event";
+            log.Value=new MockValue(); log.Value.Current.Value=log.Text.DocumentRange.Text;
             var password=window.Add(new AutomationElement("SECRET")); password.Props.IsPassword=true;
             password.Add(new AutomationElement("CHILD_SECRET"));
             window.Add(new AutomationElement("Gone" )).Gone=true;
@@ -108,12 +109,20 @@ namespace System.Windows.Automation {
     if (-not ($records | Where-Object { $_.value -eq '-5.76' })) { throw 'Missing ValuePattern data' }
     if (-not ($records | Where-Object { $_.text -like '*5484*' })) { throw 'Missing TextPattern data' }
     if (-not ($records | Where-Object { $_.textTail -like '*Latest event*' -and $_.text -notlike '*Latest event*' })) { throw 'Log tail was not captured independently of its beginning' }
+    if (-not ($records | Where-Object { $_.valueTail -like '*Latest event*' -and $_.valueLength -gt 8192 })) { throw 'ValuePattern tail missing' }
     if ((Get-Content -LiteralPath (Join-Path $out 'elements.jsonl') -Raw) -match 'SECRET|Unrelated application') { throw 'Private/unrelated data captured' }
     foreach ($record in $records) {
         if ($record.parent -ne 0 -and -not ($records | Where-Object { $_.id -eq $record.parent })) { throw 'Missing parent record' }
         if ($record.path -notlike 'window-1*') { throw 'Unexpected element path' }
     }
     Write-Output 'PASS: names, pressure ValuePattern, log TextPattern, password subtree omission, stale element and parent paths'
+    Set-Content -LiteralPath $worker -Value ($capture.Replace('Start=b.Limit;', 'throw new NotSupportedException("Qt endpoints");')) -Encoding UTF8
+    $unsupported=Capture 'unsupported'
+    $unsupportedRecords=@(Get-Content -LiteralPath (Join-Path $unsupported 'elements.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
+    $logRecord=$unsupportedRecords | Where-Object { $_.name -eq 'System Run Log' }
+    if ($logRecord.valueTail -notlike '*Latest event*' -or $logRecord.textTail -ne '' -or ($logRecord.patternErrors -join ' ') -notlike '*Qt endpoints*') { throw 'Unsupported endpoint capture lost fallback or error detail' }
+    Write-Output 'PASS: ValuePattern tail and detailed error retained when TextPattern endpoints fail'
+    Set-Content -LiteralPath $worker -Value $capture -Encoding UTF8
     $limited=Capture 'limited' @('-MaxNodes','2')
     $result=Get-Content -LiteralPath (Join-Path $limited 'result.json') -Raw | ConvertFrom-Json
     if (-not $result.limited -or $result.nodes -ne 2) { throw 'Node limit failed' }

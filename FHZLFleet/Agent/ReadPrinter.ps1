@@ -14,6 +14,30 @@ function Read-FhzlName($Element) {
     if ($null -eq $Element) { return '' }
     return [string](Read-FhzlProperty (Read-FhzlProperty $Element 'Current') 'Name')
 }
+function Get-FhzlLogTail($Log) {
+    $failed=$false
+    try {
+        $pattern=$null
+        if ($Log.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern,[ref]$pattern)) {
+            $range=$pattern.DocumentRange.Clone()
+            $range.MoveEndpointByRange([System.Windows.Automation.TextPatternRangeEndpoint]::Start,$range,[System.Windows.Automation.TextPatternRangeEndpoint]::End)
+            [void]$range.MoveEndpointByUnit([System.Windows.Automation.TextPatternRangeEndpoint]::Start,[System.Windows.Automation.TextUnit]::Character,-6000)
+            return @{text=[string]$range.GetText(6000); state='tail'; source='TextPattern'}
+        }
+    } catch { $failed=$true }
+    # Qt providers may expose TextPattern but reject moving its endpoints.
+    # ValuePattern reading succeeded in the real diagnostic: trim after reading.
+    try {
+        $pattern=$null
+        if ($Log.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern,[ref]$pattern)) {
+            $value=[string](Read-FhzlProperty (Read-FhzlProperty $pattern 'Current') 'Value')
+            return @{text=$value.Substring([Math]::Max(0,$value.Length-6000)); state='tail'; source='ValuePattern'}
+        }
+    } catch { $failed=$true }
+    $state='unavailable'
+    if ($failed) { $state='read_error' }
+    return @{text=''; state=$state; source=''}
+}
 function Get-PrinterTelemetry {
     $extra=[ordered]@{alarm=''; logTail=''; logState='unavailable'}
     try {
@@ -48,13 +72,8 @@ function Get-PrinterTelemetry {
         try {
             $log=Find-FhzlElement 'WinPrintManage.dockWidgetLog.LogBrowserDialog.tabWidget.qt_tabwidget_stackedwidget.tab.txtLog'
             if ($null -ne $log) {
-                $pattern=$null
-                if ($log.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern,[ref]$pattern)) {
-                    $range=$pattern.DocumentRange.Clone()
-                    $range.MoveEndpointByRange([System.Windows.Automation.TextPatternRangeEndpoint]::Start,$range,[System.Windows.Automation.TextPatternRangeEndpoint]::End)
-                    [void]$range.MoveEndpointByUnit([System.Windows.Automation.TextPatternRangeEndpoint]::Start,[System.Windows.Automation.TextUnit]::Character,-6000)
-                    $tail=$range.GetText(6000); $logState='tail'
-                }
+                $read=Get-FhzlLogTail $log
+                $tail=$read.text; $logState=$read.state
             }
         } catch { $logState='read_error' }
         return Convert-FhzlSnapshot -PrintText $print -FileText $file -Alarm $alarm -StatusLines $statusLines -LogTail $tail -LogState $logState

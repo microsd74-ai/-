@@ -49,7 +49,7 @@ try {
             $entry=$stack.Pop()
             $element=$entry.element
             $id=$result.nodes+1
-            $record=[ordered]@{id=$id; parent=$entry.parent; path=$entry.path; depth=$entry.depth; name=''; automationId=''; className=''; controlType=''; isOffscreen=$null; processId=0; bounds=''; patterns=@(); value=''; text=''; textTail=''; error=''; passwordSkipped=$false}
+            $record=[ordered]@{id=$id; parent=$entry.parent; path=$entry.path; depth=$entry.depth; name=''; automationId=''; className=''; controlType=''; isOffscreen=$null; processId=0; bounds=''; patterns=@(); value=''; valueTail=''; valueLength=0; text=''; textTail=''; patternErrors=@(); error=''; passwordSkipped=$false}
             try {
                 $current=Read-Property $element 'Current'
                 if (Read-Property $current 'IsPassword') {
@@ -69,10 +69,12 @@ try {
                         $pattern=$null
                         if ($element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern,[ref]$pattern)) {
                             $v=[string](Read-Property (Read-Property $pattern 'Current') 'Value')
+                            $record.valueLength=$v.Length
+                            $record.valueTail=$v.Substring([Math]::Max(0,$v.Length-8192))
                             if ($v.Length -gt 8192) { $v=$v.Substring(0,8192); $result.limited=$true }
                             $record.value=$v
                         }
-                    } catch { $result.errors++ }
+                    } catch { $result.errors++; $record.patternErrors+=('ValuePattern: '+$_.Exception.GetBaseException().Message) }
                     try {
                         $pattern=$null
                         if ($element.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern,[ref]$pattern)) {
@@ -84,7 +86,7 @@ try {
                             [void]$range.MoveEndpointByUnit([System.Windows.Automation.TextPatternRangeEndpoint]::Start,[System.Windows.Automation.TextUnit]::Character,-8192)
                             $record.textTail=$range.GetText(8192)
                         }
-                    } catch { $result.errors++ }
+                    } catch { $result.errors++; $record.patternErrors+=('TextPattern: '+$_.Exception.GetBaseException().Message) }
                 }
             } catch {
                 $record.error=$_.Exception.Message
@@ -95,7 +97,7 @@ try {
             $budget-=$utf8.GetByteCount($line)
             $text.WriteLine(('  '*$entry.depth)+"[$id] "+$record.controlType+' class='+$record.className+' automationId='+$record.automationId)
             if ($record.passwordSkipped) { $text.WriteLine('  [Password field omitted]') }
-            foreach ($field in @('name','value','text','textTail','error')) {
+            foreach ($field in @('name','value','valueTail','text','textTail','patternErrors','error')) {
                 if ($record[$field]) { $text.WriteLine('  '+$field+': '+$record[$field]) }
             }
             $result.nodes++
