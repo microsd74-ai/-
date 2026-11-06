@@ -7,7 +7,7 @@
 - [Windows-сборка в Actions](https://github.com/microsd74-ai/-/actions/workflows/uop-work.yml)
 - [Концептуальный целевой макет](UopWork/docs/target-design.png) — это рендер, не снимок работающей первой сборки.
 
-Готовые Windows-файлы публикуются workflow в artifact **UOP-WORK-v0.2.0-win-x64** только после прохождения проверок. Без принтеров предусмотрен Start-Demo.cmd с явной отметкой искусственных данных.
+Готовые Windows-файлы публикуются workflow в artifact **UOP-WORK-v0.3.0-win-x64** только после прохождения проверок. Без принтеров предусмотрен Start-Demo.cmd с явной отметкой искусственных данных.
 
 ---
 

@@ -20,7 +20,7 @@ public partial class MainWindow : Window
     private readonly Dictionary<Guid,(PrinterItem Item,CancellationTokenSource Stop,Task Task)> connections=[];
     private readonly DispatcherTimer timer;
     private string theme="Dark";
-    private bool ready,allowExit,managementOpen;
+    private bool ready,allowExit,managementOpen,cameraExpanded;
     public MainWindow(bool demo)
     {
         var root=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"UopWork");
@@ -30,6 +30,8 @@ public partial class MainWindow : Window
         catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException){historyWritable=false;}
         settings=new(Path.Combine(root,"settings.json"));password=new(Path.Combine(root,"admin.json"));dashboard=new(demo);
         InitializeComponent();DataContext=dashboard;
+        dashboard.PropertyChanged+=(_,e)=>{if(e.PropertyName is "" or nameof(Dashboard.Selected))RefreshCameras();};
+        CameraOne.ExpandRequested+=()=>ExpandCamera(1);CameraTwo.ExpandRequested+=()=>ExpandCamera(2);
         try
         {
             var saved=settings.Load();soundFile=saved.AlarmSoundFile;stopSoundFile=saved.StopSoundFile;theme=saved.Theme;App.SetTheme(theme);
@@ -43,7 +45,7 @@ public partial class MainWindow : Window
         }
         catch(Exception ex) when(ex is IOException or ArgumentException or System.Text.Json.JsonException)
         { dashboard.Message="Ошибка настроек: "+ex.Message; }
-        ready=true;
+        ready=true;RefreshCameras();
         timer=new DispatcherTimer(TimeSpan.FromSeconds(1),DispatcherPriority.Background,(_,_)=>
         {
             if(dashboard.Demo)foreach(var p in dashboard.Printers.Where(p=>p.Connection!="Нет связи"))if(p.Data is {} data)p.Apply(data with{ReceivedAt=DateTimeOffset.Now});
@@ -55,7 +57,7 @@ public partial class MainWindow : Window
             dashboard.Refresh();
         },Dispatcher);timer.Start();
         Loaded+=(_,_)=>{Left=0;Top=0;Width=SystemParameters.PrimaryScreenWidth;Height=SystemParameters.PrimaryScreenHeight;};
-        Closed+=(_,_)=>{timer.Stop();audio.Dispose();foreach(var c in connections.Values)c.Stop.Cancel();};
+        Closed+=(_,_)=>{timer.Stop();CameraOne.Dispose();CameraTwo.Dispose();audio.Dispose();foreach(var c in connections.Values)c.Stop.Cancel();};
     }
     private void Configure(AppSettings saved)
     {
@@ -115,6 +117,15 @@ public partial class MainWindow : Window
         item.Alarms.Changed+=Record;item.StopAlarms.Changed+=Record;
     }
     private void UpdateAudio()=>audio.Update(dashboard.Printers.SelectMany(p=>p.Alarms.Active).Where(a=>!a.Acknowledged).Select(a=>a.Id),soundFile,dashboard.Printers.SelectMany(p=>p.StopAlarms.Active).Where(a=>!a.Acknowledged).Select(a=>a.Id),stopSoundFile);
+    private void RefreshCameras()
+    {if(cameraExpanded)return;CameraOne.Configure(dashboard.Selected?.Config.Cameras,1,dashboard.Demo);CameraTwo.Configure(dashboard.Selected?.Config.Cameras,2,dashboard.Demo);}
+    private void ExpandCamera(int camera)
+    {
+        var printer=dashboard.Selected;if(printer is null)return;
+        cameraExpanded=true;CameraOne.Configure(null,1);CameraTwo.Configure(null,2);
+        try{new CameraPreviewWindow(printer.Name,printer.Config.Cameras,dashboard.Demo,camera){Owner=this}.ShowDialog();}
+        finally{cameraExpanded=false;RefreshCameras();}
+    }
     private void HistoryClick(object sender,RoutedEventArgs e)=>new AlarmHistoryWindow(history){Owner=this}.ShowDialog();
     private void WindowClosing(object? sender,CancelEventArgs e)
     {

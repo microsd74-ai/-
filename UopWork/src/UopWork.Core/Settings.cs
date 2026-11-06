@@ -6,6 +6,7 @@ namespace UopWork.Core;
 
 public sealed record PrinterConfig(Guid Id, string Name, string Host, int Port = 5055)
 {
+    public RecorderSettings? Cameras {get;init;}
     public string Endpoint => $"{Host}:{Port}";
     public PrinterConfig Validate()
     {
@@ -15,7 +16,7 @@ public sealed record PrinterConfig(Guid Id, string Name, string Host, int Port =
             Host.Split('.').Length != 4 || address.Equals(IPAddress.Any) || address.Equals(IPAddress.Broadcast))
             throw new ArgumentException("Укажите IPv4 компьютера принтера.");
         if (Port is < 1 or > 65535) throw new ArgumentException("Порт должен быть от 1 до 65535.");
-        return this with { Name = Name.Trim(), Host = address.ToString() };
+        return this with { Name = Name.Trim(), Host = address.ToString(), Cameras=Cameras?.Validate() };
     }
 }
 public sealed record AppSettings(string Theme, List<PrinterConfig> Printers)

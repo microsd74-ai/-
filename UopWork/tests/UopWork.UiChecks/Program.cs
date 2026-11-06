@@ -53,7 +53,7 @@ internal static class Program
                 CheckLayout(window);
                 Capture(window,Path.Combine(screenshots,theme+"-1366.png"));
             }
-            Check(dashboard.ModeLabel.Contains("v0.2.0"),"visible build version");
+            Check(dashboard.ModeLabel.Contains("v0.3.0"),"visible build version");
             var testClock=new UiClock();var stopped=new PrinterItem(new(Guid.NewGuid(),"Контроль слоя","127.0.0.8"),testClock);
             var sample=dashboard.Printers[0].Data! with{Printed=100,Total=200,FinishKind="ESTIMATE",Alarm="1/1:E4.2: Test",AlarmRead=true};
             stopped.Apply(sample);
@@ -78,6 +78,23 @@ internal static class Program
             var history=new System.Collections.ObjectModel.ObservableCollection<AlarmHistoryEntry>{new(Guid.NewGuid(),"Принтер Ж",new(DateTimeOffset.Now,"Появление",Guid.NewGuid(),"Тестовая ошибка"))};
             var historyWindow=new AlarmHistoryWindow(history);historyWindow.Show();Pump();Capture(historyWindow,Path.Combine(screenshots,"alarm-history.png"));historyWindow.Close();
             using(var audio=new AlarmAudio()){audio.Update([],"");Check(audio.Status.Length>0,"audio fallback initialization");audio.Update([],"Z:\\missing-uop-recording.wav");Check(audio.Status.Contains("Запись недоступна"),"missing recording fallback");}
+            var cameraPassword="Тест камеры:@/#%";
+            var protectedPassword=CameraSecrets.Protect(cameraPassword);
+            Check(!protectedPassword.Contains(cameraPassword)&&CameraSecrets.Unprotect(protectedPassword)==cameraPassword,"camera DPAPI roundtrip");
+            var cameraSettings=new CameraSettingsWindow(settings,settings.Load().Printers.Single(),()=>{});cameraSettings.Show();Pump();
+            Check(cameraSettings.WindowStyle==WindowStyle.None,"borderless camera settings");Capture(cameraSettings,Path.Combine(screenshots,"camera-settings.png"));cameraSettings.Close();
+            var cameraPreview=new CameraPreviewWindow("Тест камер",null,true);cameraPreview.Show();Pump();Capture(cameraPreview,Path.Combine(screenshots,"camera-preview.png"));cameraPreview.Close();
+            var vlc=UopWork.Desktop.Video.CameraRuntime.GetAsync().GetAwaiter().GetResult();
+            using(var clip=new LibVLCSharp.Shared.Media(vlc,new Uri(Path.Combine(AppContext.BaseDirectory,"camera-test.mp4"))))
+            using(var decoder=new LibVLCSharp.Shared.MediaPlayer(vlc))
+            {
+                clip.AddOption(":vout=dummy");clip.AddOption(":no-audio");
+                Check(decoder.Play(clip),"native video decoder start");
+                var deadline=DateTime.UtcNow.AddSeconds(12);
+                while(clip.Statistics.DecodedVideo==0&&DateTime.UtcNow<deadline){Pump();Thread.Sleep(50);}
+                Check(clip.Statistics.DecodedVideo>0,"native H264 frames decoded");decoder.Stop();
+            }
+            Console.WriteLine("PASS cameras: native VLC loading, local H264 decoding, protected credentials, settings/preview windows");
             Check(log.Errors.Count==0,"WPF binding errors: "+string.Join("\n",log.Errors));
             window.Hide();Console.WriteLine("PASS Windows WPF: resources, three themes, printer selection, alarm binding, admin/password windows, 1920/1366 screenshots");
             return 0;

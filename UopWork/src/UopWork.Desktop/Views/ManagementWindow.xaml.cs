@@ -21,7 +21,7 @@ public partial class ManagementWindow : Window
     private PrinterConfig Read(Guid? id=null)
     {
         if(!int.TryParse(Port.Text,out var port))throw new ArgumentException("Укажите числовой порт.");
-        return new PrinterConfig(id??Guid.NewGuid(),PrinterName.Text,Host.Text,port).Validate();
+        return (new PrinterConfig(id??Guid.NewGuid(),PrinterName.Text,Host.Text,port){Cameras=rows.FirstOrDefault(p=>p.Id==id)?.Cameras}).Validate();
     }
     private void Try(Action action)
     {
@@ -56,6 +56,11 @@ public partial class ManagementWindow : Window
         if(MessageBox.Show(this,$"Заменить текущий список на {imported.Count} принтеров из файла?","Импорт",MessageBoxButton.YesNo)!=MessageBoxResult.Yes)return;
         Commit(imported.ToList());
     });
+    private void Cameras(object sender,RoutedEventArgs e)
+    {
+        if(PrinterTable.SelectedItem is not PrinterConfig printer){Error.Text="Выберите принтер в списке.";return;}
+        new CameraSettingsWindow(settings,printer,()=>{Reload();changed();}){Owner=this}.ShowDialog();
+    }
     private void ChangePassword(object sender,RoutedEventArgs e)=>new PasswordWindow(password,true){Owner=this}.ShowDialog();
     private void AudioSettings(object sender,RoutedEventArgs e)=>new AudioSettingsWindow(settings,changed){Owner=this}.ShowDialog();
     private void Events(object sender,RoutedEventArgs e)
