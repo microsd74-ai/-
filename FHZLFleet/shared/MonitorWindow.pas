@@ -2,7 +2,7 @@ unit MonitorWindow;
 {$mode objfpc}{$H+}{$codepage utf8}
 interface
 uses Classes,SysUtils,Forms,Controls,StdCtrls,ExtCtrls,Graphics,Process,
-  fpjson,jsonparser,Dialogs,PrinterSettings,AdminSecurity;
+  fpjson,jsonparser,Dialogs,PrinterSettings,AdminSecurity,FleetTheme,Menus,Math;
 type
   TPrinterView = class
   public
@@ -23,16 +23,25 @@ type
     Timer: TTimer;
     Pending,GlobalError: string;
     FUpdating: Boolean;
-    Header,Body,WarningBox,MetaBox,JournalBox,EventsBox: TPanel;
-    Cards: array[0..3] of TPanel;
+    Header,Body: TPanel;
+    WarningBox,MetaBox,JournalBox,EventsBox: TThemeCard;
+    Scroller: TScrollBox;
+    PickerButton,ManageButton: TThemeButton;
+    ChoiceMenu: TPopupMenu;
+    WarningIcon: TFleetIcon;
+    FLayout: Boolean;
+    Cards: array[0..3] of TThemeCard;
     CardTitles: array[0..3] of TLabel;
     CardValues: array[0..3] of TLabel;
     Picker: TComboBox;
-    ManageButton: TButton;
+
     Badge,PrinterTitle,Subtitle,WarningTitle,WarningText,FileLabel,ModeLabel,AxesLabel,TimeLabel,ExtraLabel: TLabel;
     Dot: TShape;
     PrinterLog,ConnectionLog: TMemo;
     procedure BuildUI;
+    procedure OpenChoice(Sender: TObject);
+    procedure ChooseItem(Sender: TObject);
+    function U(Value: Integer): Integer;
     procedure LayoutBody(Sender: TObject);
     procedure SelectPrinter(Sender: TObject);
     procedure Manage(Sender: TObject);
@@ -53,21 +62,19 @@ type
 var MonitorForm: TMonitorWindow;
 implementation
 uses AdminWindows;
-const Background = $00F8F6F3; Ink = $003B3026; Muted = $007A7066; Border = $00DDD6CF;
+const Background = ThemeBackground; Ink = $003B3026; Muted = $007A7066; Border = $00DDD6CF;
 function NewLabel(Owner: TComponent; Parent: TWinControl; const Text: string; X,Y,W,H,Size: Integer; Bold: Boolean=False): TLabel;
 begin
   Result := TLabel.Create(Owner); Result.Parent := Parent; Result.SetBounds(X,Y,W,H);
-  Result.AutoSize := False; Result.Caption := Text; Result.Font.Size := Size;
+  Result.AutoSize := False; Result.Transparent := True; Result.Caption := Text; Result.Font.Size := Size;
   Result.Font.Color := Ink; if Bold then Result.Font.Style := [fsBold];
 end;
-function Card(Owner: TComponent; Parent: TWinControl; X,Y,W,H: Integer): TPanel;
-var S: TShape;
+function Card(Owner: TComponent; Parent: TWinControl; X,Y,W,H: Integer): TThemeCard;
 begin
-  Result := TPanel.Create(Owner); Result.Parent := Parent; Result.SetBounds(X,Y,W,H);
-  Result.BevelOuter := bvNone; Result.ParentBackground := False; Result.Color := Background; Result.Caption := '';
-  S := TShape.Create(Owner); S.Parent := Result; S.Align := alClient; S.Shape := stRoundRect;
-  S.Brush.Color := clWhite; S.Pen.Color := Border;
+  Result := TThemeCard.Create(Owner); Result.Parent := Parent; Result.SetBounds(X,Y,W,H);
 end;
+function IconAt(Owner:TComponent;Parent:TWinControl;Kind:TFleetIconKind;X,Y,W:Integer):TFleetIcon;
+begin Result:=TFleetIcon.Create(Owner);Result.Parent:=Parent;Result.SetBounds(X,Y,W,W);Result.Kind:=Kind end;
 constructor TPrinterView.Create(const Endpoint: string);
 begin inherited Create; ID := Endpoint; Connection := 'disconnected'; Events := TStringList.Create end;
 destructor TPrinterView.Destroy;
@@ -80,7 +87,7 @@ end;
 constructor TMonitorWindow.Create(AOwner: TComponent);
 begin
   inherited CreateNew(AOwner); Caption := 'FHZL — общий монитор';
-  Position := poScreenCenter; Width := 1080; Height := 960; Constraints.MinWidth := 900; Constraints.MinHeight := 720;
+  Position := poScreenCenter; Width := 1080; Height := 900; Constraints.MinWidth := 900; Constraints.MinHeight := 720;
   Font.Name := 'Segoe UI'; Font.Size := 10; Color := Background;
   States := TList.Create; Config := TPrinterConfig.Create(SettingsPath);
   Password := TAdminPassword.Create(ChangeFileExt(Application.ExeName,'.admin.json'));
@@ -91,7 +98,7 @@ end;
 function TMonitorWindow.SettingsPath: string;
 begin Result := ChangeFileExt(Application.ExeName,'.targets.json') end;
 procedure TMonitorWindow.BuildUI;
-var Scroll: TScrollBox; I: Integer;
+var I: Integer;
 const Titles: array[0..3] of string = ('Слои','Окончание','Температура','Влажность');
 begin
   Header := TPanel.Create(Self); Header.Parent := Self; Header.Align := alTop; Header.Height := 72;
@@ -99,26 +106,31 @@ begin
   Header.BevelOuter := bvNone; Header.ParentBackground := False; Header.Color := clWhite;
   NewLabel(Self,Header,'Принтер',24,24,90,28,11,True);
   Picker := TComboBox.Create(Self); Picker.Parent := Header; Picker.SetBounds(120,20,310,34);
-  Picker.Style := csDropDownList; Picker.OnChange := @SelectPrinter;
+  Picker.Style := csDropDownList; Picker.OnChange := @SelectPrinter; Picker.Visible := False;
+  ChoiceMenu := TPopupMenu.Create(Self);
+  PickerButton := TThemeButton.Create(Self); PickerButton.Parent := Header;
+  PickerButton.SetBounds(120,18,310,38); PickerButton.DropDown := True; PickerButton.Caption := 'Выберите принтер'; PickerButton.OnClick := @OpenChoice;
   Dot := TShape.Create(Self); Dot.Parent := Header; Dot.SetBounds(453,30,11,11); Dot.Shape := stCircle; Dot.Pen.Style := psClear;
   Badge := NewLabel(Self,Header,'Нет подключения',474,24,270,28,10); Badge.Anchors := [akLeft,akTop];
-  ManageButton := TButton.Create(Self); ManageButton.Parent := Header;
+  ManageButton := TThemeButton.Create(Self); ManageButton.Parent := Header;
   ManageButton.SetBounds(ClientWidth-198,18,174,38); ManageButton.Anchors := [akLeft,akTop];
-  ManageButton.Caption := 'Управление'; ManageButton.OnClick := @Manage;
-  Scroll := TScrollBox.Create(Self); Scroll.Parent := Self; Scroll.Align := alClient; Scroll.BorderStyle := bsNone;
-  Scroll.Color := Background; Scroll.HorzScrollBar.Visible := False;
-  Body := TPanel.Create(Self); Body.Parent := Scroll; Body.Align := alTop; Body.Height := 794;
+  ManageButton.Icon := fiLock; ManageButton.Caption := 'Управление'; ManageButton.OnClick := @Manage;
+  Scroller := TScrollBox.Create(Self); Scroller.Parent := Self; Scroller.Align := alClient; Scroller.BorderStyle := bsNone;
+  Scroller.Color := Background; Scroller.HorzScrollBar.Visible := False; Scroller.OnResize := @LayoutBody;
+  Body := TPanel.Create(Self); Body.Parent := Scroller; Body.Align := alTop; Body.Height := 794;
   Body.BevelOuter := bvNone; Body.ParentBackground := False; Body.Color := Background; Body.OnResize := @LayoutBody;
   PrinterTitle := NewLabel(Self,Body,'Выберите принтер',24,16,900,38,22,True);
   Subtitle := NewLabel(Self,Body,'Показания выбранного принтера',24,57,900,25,10); Subtitle.Font.Color := Muted;
   WarningBox := Card(Self,Body,24,94,900,80);
   WarningTitle := NewLabel(Self,WarningBox,'Ожидание показателей',20,12,850,25,12,True);
   WarningText := NewLabel(Self,WarningBox,'Добавьте принтер через «Управление».',20,40,850,30,10);
-  WarningText.WordWrap := True;
+  WarningText.WordWrap := True; WarningIcon := IconAt(Self,WarningBox,fiWarning,18,22,32); WarningIcon.Ink := $0011A5E9;
   for I := 0 to 3 do begin
     Cards[I] := Card(Self,Body,24+I*240,190,224,96);
-    CardTitles[I] := NewLabel(Self,Cards[I],Titles[I],18,12,190,24,10,True);
+    IconAt(Self,Cards[I],TFleetIconKind(Ord(fiLayers)+I),18,14,28);
+    CardTitles[I] := NewLabel(Self,Cards[I],Titles[I],58,16,150,24,10,True);
     CardValues[I] := NewLabel(Self,Cards[I],'—',18,42,190,42,22,True);
+    CardValues[I].Alignment := taCenter;
     if I=1 then begin CardValues[I].Font.Size := 13; CardValues[I].WordWrap := True; CardValues[I].Top := 38; CardValues[I].Height := 52 end;
   end;
   MetaBox := Card(Self,Body,24,302,900,152);
@@ -128,30 +140,67 @@ begin
   TimeLabel := NewLabel(Self,MetaBox,'Обновлено: —',18,93,850,25,10);
   ExtraLabel := NewLabel(Self,MetaBox,'',18,120,850,23,9); ExtraLabel.Font.Color := Muted;
   JournalBox := Card(Self,Body,24,470,900,182);
-  NewLabel(Self,JournalBox,'Журнал принтера',18,12,850,25,12,True);
+  JournalBox.HeadingHeight := 42; IconAt(Self,JournalBox,fiDocument,18,9,24);
+  NewLabel(Self,JournalBox,'Журнал принтера',54,11,750,25,12,True);
   PrinterLog := TMemo.Create(Self); PrinterLog.Parent := JournalBox; PrinterLog.SetBounds(18,46,864,120);
   PrinterLog.ReadOnly := True; PrinterLog.BorderStyle := bsNone; PrinterLog.ScrollBars := ssAutoVertical;
   PrinterLog.WordWrap := True; PrinterLog.Color := clWhite;
   EventsBox := Card(Self,Body,24,668,900,108);
-  NewLabel(Self,EventsBox,'События подключения',18,10,850,25,12,True);
+  EventsBox.HeadingHeight := 42; IconAt(Self,EventsBox,fiLink,18,9,24);
+  NewLabel(Self,EventsBox,'События подключения',54,11,750,25,12,True);
   ConnectionLog := TMemo.Create(Self); ConnectionLog.Parent := EventsBox; ConnectionLog.SetBounds(18,42,864,50);
   ConnectionLog.ReadOnly := True; ConnectionLog.BorderStyle := bsNone; ConnectionLog.ScrollBars := ssAutoVertical;
   ConnectionLog.WordWrap := True; ConnectionLog.Color := clWhite;
   LayoutBody(Self);
 end;
-procedure TMonitorWindow.LayoutBody(Sender: TObject);
-var W,CW,I: Integer;
+function TMonitorWindow.U(Value:Integer):Integer;
+begin Result:=Scale96ToForm(Value) end;
+procedure TMonitorWindow.OpenChoice(Sender:TObject);
+var I:Integer; Item:TMenuItem; P:TPoint;
 begin
-  if not Assigned(EventsBox) then Exit;
-  ManageButton.Left := Header.ClientWidth-ManageButton.Width-24;
-  Badge.Width := ManageButton.Left-Badge.Left-16;
-  W := Body.ClientWidth-48; if W<750 then W := 750;
-  WarningBox.Width := W; WarningTitle.Width := W-40; WarningText.Width := W-40;
-  PrinterTitle.Width := W; Subtitle.Width := W;
-  CW := (W-36) div 4;
-  for I := 0 to 3 do begin Cards[I].Left := 24+I*(CW+12); Cards[I].Width := CW; CardValues[I].Width := CW-36; CardTitles[I].Width := CW-36 end;
-  MetaBox.Width := W; FileLabel.Width := W-36; ModeLabel.Width := W-36; AxesLabel.Width := W-36; TimeLabel.Width := W-36; ExtraLabel.Width := W-36;
-  JournalBox.Width := W; PrinterLog.Width := W-36; EventsBox.Width := W; ConnectionLog.Width := W-36;
+  ChoiceMenu.Items.Clear;
+  for I:=0 to Picker.Items.Count-1 do begin
+    Item:=TMenuItem.Create(ChoiceMenu);Item.Caption:=Picker.Items[I];Item.Tag:=I;
+    Item.Checked:=I=Picker.ItemIndex;Item.RadioItem:=True;Item.OnClick:=@ChooseItem;ChoiceMenu.Items.Add(Item);
+  end;
+  if ChoiceMenu.Items.Count=0 then Exit;
+  P:=PickerButton.ClientToScreen(Point(0,PickerButton.Height+U(3)));ChoiceMenu.PopUp(P.X,P.Y);
+end;
+procedure TMonitorWindow.ChooseItem(Sender:TObject);
+begin Picker.ItemIndex:=TMenuItem(Sender).Tag;SelectPrinter(Self) end;
+procedure TMonitorWindow.LayoutBody(Sender: TObject);
+var W,CW,I,L,JH,EH:Integer;
+begin
+  if FLayout or not Assigned(EventsBox) then Exit;
+  FLayout:=True;
+  try
+    Header.Height:=U(66);
+    W:=Min(U(1000),Body.ClientWidth-U(40)); if W<U(740) then W:=U(740);
+    L:=(Body.ClientWidth-W) div 2;
+    ManageButton.SetBounds(L+W-U(180),U(15),U(180),U(38));
+    PickerButton.SetBounds(L+U(96),U(15),U(310),U(38));
+    { The compact toolbar follows the same centred column as the dashboard. }
+    Header.Controls[0].SetBounds(L,U(23),U(90),U(28));
+    Dot.SetBounds(L+U(430),U(29),U(10),U(10)); Badge.SetBounds(L+U(450),U(23),U(250),U(26));
+    Body.Height:=Max(U(680),Scroller.ClientHeight);
+    PrinterTitle.SetBounds(L,U(12),W,U(36)); Subtitle.SetBounds(L,U(51),W,U(25));
+    WarningBox.SetBounds(L,U(86),W,U(72)); WarningTitle.SetBounds(U(66),U(12),W-U(86),U(24));
+    WarningText.SetBounds(U(66),U(39),W-U(86),U(28));WarningIcon.SetBounds(U(18),U(20),U(32),U(32));
+    CW:=(W-U(36)) div 4;
+    for I:=0 to 3 do begin
+      Cards[I].SetBounds(L+I*(CW+U(12)),U(172),CW,U(88));
+      CardTitles[I].SetBounds(U(56),U(16),CW-U(68),U(22));
+      CardValues[I].SetBounds(U(12),U(41),CW-U(24),U(40));
+      if I=1 then begin CardValues[I].Top:=U(38);CardValues[I].Height:=U(48) end;
+    end;
+    MetaBox.SetBounds(L,U(274),W,U(138));
+    FileLabel.SetBounds(U(18),U(10),W-U(36),U(23));ModeLabel.SetBounds(U(18),U(35),W-U(36),U(23));
+    AxesLabel.SetBounds(U(18),U(60),W-U(36),U(23));TimeLabel.SetBounds(U(18),U(85),W-U(36),U(23));
+    ExtraLabel.SetBounds(U(18),U(110),W-U(36),U(22));
+    EH:=U(104);JH:=Body.Height-U(426)-EH-U(30);
+    JournalBox.SetBounds(L,U(426),W,JH);PrinterLog.SetBounds(U(18),U(52),W-U(36),JH-U(66));
+    EventsBox.SetBounds(L,U(426)+JH+U(14),W,EH);ConnectionLog.SetBounds(U(18),U(51),W-U(36),EH-U(63));
+  finally FLayout:=False end;
 end;
 function TMonitorWindow.FindState(const ID: string): TPrinterView;
 var I: Integer;
@@ -271,6 +320,7 @@ var V: TPrinterView; O,E: TJSONObject; Stale: Boolean; S,Alarm,State,Value: stri
   begin if TrimRight(M.Text)<>TrimRight(Text) then M.Text := Text end;
 begin
   V := Selected; O := nil; E := nil;
+  if Assigned(V) then PickerButton.Caption := Picker.Text else PickerButton.Caption := 'Выберите принтер';
   if Assigned(V) then O := V.Snapshot;
   if Assigned(O) and (O.Find('extra') is TJSONObject) then E := TJSONObject(O.Find('extra'));
   Stale := not Assigned(V);
@@ -279,7 +329,7 @@ begin
   Subtitle.Caption := 'Показания выбранного принтера';
   for I := 0 to 3 do CardValues[I].Caption := '—';
   CardValues[1].Caption := 'Нет данных'; CardTitles[1].Caption := 'Окончание';
-  TShape(WarningBox.Controls[0]).Brush.Color := clWhite;
+  WarningBox.FillColor := clWhite; WarningIcon.Visible := False;
   FileLabel.Caption := 'Файл: —'; FileLabel.Hint := ''; ModeLabel.Caption := 'Режим: —'; AxesLabel.Caption := 'Координаты: —'; TimeLabel.Caption := 'Обновлено: —';
   ExtraLabel.Caption := ''; WarningTitle.Caption := 'Ожидание показателей'; WarningText.Caption := 'Добавьте принтер через «Управление».';
   Dot.Brush.Color := $009D958A; Badge.Caption := 'Нет подключения'; WarningTitle.Font.Color := Ink;
@@ -306,10 +356,10 @@ begin
     TimeLabel.Caption := UTF8String('Обновлено: ')+O.Get('receivedDisplay','');
     ExtraLabel.Caption := UTF8String('Секунд на слой: ')+OrDash(Extra('layerSeconds'))+UTF8String('  ·  Среднее: ')+OrDash(Extra('layerAverage'))+UTF8String('  ·  Длительность: ')+OrDash(O.Get('duration',''));
     Alarm := Extra('alarm'); State := O.Get('state','');
-    if Alarm<>'' then begin TShape(WarningBox.Controls[0]).Brush.Color := $00E7F3FF; WarningTitle.Caption := 'Предупреждение FHZL'; WarningTitle.Font.Color := $002B65A5; WarningText.Caption := Alarm end
+    if Alarm<>'' then begin WarningBox.FillColor := $00E7F3FF; WarningIcon.Visible := True; WarningTitle.Caption := 'Предупреждение FHZL'; WarningTitle.Font.Color := $002B65A5; WarningText.Caption := Alarm end
     else begin WarningTitle.Caption := 'Сообщение FHZL'; WarningText.Caption := 'Текст верхнего сообщения не получен.' end;
     if State<>'ok' then begin
-      WarningTitle.Caption := 'Показатели печати недоступны';
+      WarningIcon.Visible := True; WarningBox.FillColor := $00E7F3FF; WarningTitle.Caption := 'Показатели печати недоступны';
       S := O.Get('detail','');
       if Pos('WINDOW_NOT_FOUND',S)>0 then S := 'Окно FHZL не найдено'
       else if Pos('TEXT_NOT_FOUND',S)>0 then S := 'Блок показателей печати не найден'

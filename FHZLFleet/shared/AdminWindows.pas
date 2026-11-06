@@ -2,7 +2,7 @@ unit AdminWindows;
 {$mode objfpc}{$H+}{$codepage utf8}
 interface
 uses Classes,SysUtils,Forms,Controls,StdCtrls,ExtCtrls,Grids,Graphics,
-  Dialogs,AdminSecurity,PrinterSettings;
+  Dialogs,AdminSecurity,PrinterSettings,FleetTheme,LCLType;
 function RequestAdminAccess(Store: TAdminPassword; ChangePassword: Boolean=False): Boolean;
 procedure OpenPrinterManagement(const SettingsPath: string; Store: TAdminPassword; OnChanged: TNotifyEvent);
 implementation
@@ -14,6 +14,7 @@ type
     OldEdit,NewEdit,ConfirmEdit: TEdit;
     ErrorLabel: TLabel;
     procedure Submit(Sender: TObject);
+    procedure DialogKey(Sender:TObject;var Key:Word;Shift:TShiftState);
   public
     constructor Build(AStore: TAdminPassword; AChange: Boolean);
   end;
@@ -27,6 +28,7 @@ type
     MessageLabel: TLabel;
     procedure RefreshTable(Index: Integer);
     procedure SelectPrinter(Sender: TObject);
+    procedure DialogKey(Sender:TObject;var Key:Word;Shift:TShiftState);
     procedure TableKey(Sender: TObject; var Key: Word; Shift: TShiftState);
     procedure AddPrinter(Sender: TObject);
     procedure SavePrinter(Sender: TObject);
@@ -43,12 +45,14 @@ begin
   Result := TLabel.Create(Owner); Result.Parent := Parent; Result.SetBounds(X,Y,W,24);
   Result.AutoSize := False; Result.Caption := Text; Result.Font.Color := $004A4036;
 end;
-function ButtonAt(Owner: TComponent; Parent: TWinControl; const Text: string; X,Y,W: Integer; Click: TNotifyEvent): TButton;
+function ButtonAt(Owner: TComponent; Parent: TWinControl; const Text: string; X,Y,W: Integer; Click: TNotifyEvent): TThemeButton;
 begin
-  Result := TButton.Create(Owner); Result.Parent := Parent; Result.SetBounds(X,Y,W,36); Result.Caption := Text; Result.OnClick := Click;
+  Result := TThemeButton.Create(Owner); Result.Parent := Parent; Result.SetBounds(X,Y,W,36); Result.Caption := Text; Result.OnClick := Click;
+  Result.Primary := (Text=UTF8String('Сохранить')) or (Text=UTF8String('Войти'));
+  if Text=UTF8String('Сменить пароль') then Result.Icon := fiLock;
 end;
 constructor TPasswordWindow.Build(AStore: TAdminPassword; AChange: Boolean);
-var Y: Integer; B: TButton;
+var Y: Integer; B: TThemeButton;
   function PasswordEdit(const Title: string): TEdit;
   begin
     LabelAt(Self,Self,Title,28,Y,385); Inc(Y,26);
@@ -59,10 +63,12 @@ begin
   inherited CreateNew(nil); Store := AStore;
   Position := poOwnerFormCenter; BorderStyle := bsDialog; Color := clWhite;
   Font.Name := 'Segoe UI'; Font.Size := 10; ClientWidth := 440;
+  KeyPreview:=True;OnKeyDown:=@DialogKey;
   Caption := 'Вход в управление'; Mode := 0;
   if AChange then begin Mode := 2; Caption := 'Сменить пароль' end
   else if not Store.IsConfigured then begin Mode := 1; Caption := 'Создать пароль управления' end;
-  LabelAt(Self,Self,'Управление списком принтеров',28,18,385).Font.Style := [fsBold];
+  with TFleetIcon.Create(Self) do begin Parent:=Self;SetBounds(28,16,28,28);Kind:=fiLock end;
+  LabelAt(Self,Self,'Управление списком принтеров',72,20,340).Font.Style := [fsBold];
   Y := 58;
   if Mode<>1 then OldEdit := PasswordEdit('Пароль администратора');
   if Mode<>0 then begin
@@ -76,6 +82,11 @@ begin
   else B := ButtonAt(Self,Self,'Сохранить',294,Y,120,@Submit);
   B.Default := True; ClientHeight := Y+58;
   if Mode=1 then ActiveControl := NewEdit else ActiveControl := OldEdit;
+end;
+procedure TPasswordWindow.DialogKey(Sender:TObject;var Key:Word;Shift:TShiftState);
+begin
+  if Key=VK_ESCAPE then begin ModalResult:=mrCancel;Key:=0 end
+  else if (Key=VK_RETURN) and not (ActiveControl is TThemeButton) then begin Key:=0;Submit(Self) end;
 end;
 procedure TPasswordWindow.Submit(Sender: TObject);
 begin
@@ -101,9 +112,10 @@ begin
   try Result := F.ShowModal=mrOK finally F.Free end;
 end;
 constructor TManagementWindow.Build(const Path: string; AStore: TAdminPassword; OnChanged: TNotifyEvent);
-var B: TButton;
+var B: TThemeButton;
 begin
   inherited CreateNew(nil); Store := AStore; FChanged := OnChanged;
+  KeyPreview:=True;OnKeyDown:=@DialogKey;
   Caption := 'Управление принтерами'; Position := poOwnerFormCenter; BorderStyle := bsDialog;
   Color := clWhite; Font.Name := 'Segoe UI'; Font.Size := 10; ClientWidth := 650; ClientHeight := 568;
   Config := TPrinterConfig.Create(Path); Config.Load;
@@ -113,6 +125,7 @@ begin
   Table.Options := Table.Options + [goRowSelect] - [goEditing];
   Table.ColWidths[0] := 270; Table.ColWidths[1] := 210; Table.ColWidths[2] := 94;
   Table.Cells[0,0] := 'Название'; Table.Cells[1,0] := 'IP-адрес'; Table.Cells[2,0] := 'Порт';
+  Table.DefaultRowHeight:=30;Table.FixedColor:=$00F4EFE9;
   Table.OnClick := @SelectPrinter; Table.OnKeyUp := @TableKey;
   LabelAt(Self,Self,'Название',24,284,130); NameEdit := TEdit.Create(Self); NameEdit.Parent := Self; NameEdit.SetBounds(170,280,456,32);
   LabelAt(Self,Self,'IP-адрес',24,330,130); HostEdit := TEdit.Create(Self); HostEdit.Parent := Self; HostEdit.SetBounds(170,326,456,32);
@@ -125,6 +138,8 @@ begin
   B := ButtonAt(Self,Self,'Закрыть',486,516,140,nil); B.ModalResult := mrClose; B.Cancel := True;
   RefreshTable(0);
 end;
+procedure TManagementWindow.DialogKey(Sender:TObject;var Key:Word;Shift:TShiftState);
+begin if Key=VK_ESCAPE then begin ModalResult:=mrClose;Key:=0 end end;
 procedure TManagementWindow.RefreshTable(Index: Integer);
 var I: Integer;
 begin

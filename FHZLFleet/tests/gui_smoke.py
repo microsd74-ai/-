@@ -14,6 +14,8 @@ import time
 
 binary, xdotool, screenshots = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
 screenshots.mkdir(parents=True, exist_ok=True)
+MAIN_SCALE=float(os.environ.get('FHZL_TEST_MAIN_SCALE','1'))
+MAIN_WINDOWS=set()
 
 def xdo(*args):
     return subprocess.check_output([xdotool, *map(str,args)], stderr=subprocess.DEVNULL, text=True).strip()
@@ -23,7 +25,9 @@ def window(title, timeout=10):
     while time.monotonic()<end:
         try:
             ids=xdo('search','--onlyvisible','--name','^'+title+'$').splitlines()
-            if ids: return ids[-1]
+            if ids:
+                if title=='FHZL — общий монитор': MAIN_WINDOWS.add(ids[-1])
+                return ids[-1]
         except subprocess.CalledProcessError: pass
         time.sleep(.1)
     raise AssertionError('Window missing: '+title)
@@ -33,6 +37,8 @@ def visible(title):
     except AssertionError: return False
 
 def click(w,x,y):
+    factor=MAIN_SCALE if w in MAIN_WINDOWS else 1
+    x,y=round(x*factor),round(y*factor)
     xdo('windowfocus','--sync',w); xdo('mousemove','--window',w,x,y); xdo('click','1'); time.sleep(.2)
 
 def field(w,x,y,value):
@@ -72,6 +78,8 @@ while True:
     try:
         main=window('FHZL — общий монитор'); time.sleep(2)
         shot(main,'main.png')
+        xdo('windowmove',main,0,0); xdo('windowsize','--sync',main,'1900','1060'); time.sleep(.3); shot(main,'maximized.png')
+        xdo('windowsize','--sync',main,round(1080*MAIN_SCALE),round(900*MAIN_SCALE)); time.sleep(.2)
         # A first visit creates a password; no default password is shipped.
         click(main,970,36); setup=window('Создать пароль управления')
         field(setup,180,100,'short'); field(setup,180,174,'short'); click(setup,350,282)
@@ -93,7 +101,7 @@ while True:
         click(main,970,36); login=window('Вход в управление')
         field(login,180,100,'wrong-password'); click(login,350,208)
         assert visible('Вход в управление') and not visible('Управление принтерами') and config.read_bytes()==saved
-        field(login,180,100,'test-admin-pass'); shot(login,'login.png'); click(login,350,208)
+        field(login,180,100,'test-admin-pass'); shot(login,'login.png'); xdo('key','Return')
         admin=window('Управление принтерами')
         click(admin,120,534); change=window('Сменить пароль')
         field(change,180,100,'test-admin-pass'); field(change,180,174,'second-admin-pass'); field(change,180,248,'second-admin-pass')
@@ -105,7 +113,7 @@ while True:
         record=json.loads((root/'Monitor.admin.json').read_text())
         assert record['hash']==hashlib.pbkdf2_hmac('sha256',b'second-admin-pass',bytes.fromhex(record['salt']),record['iterations']).hex()
         print('PASS: wrong password blocks management; correct password opens it; changed password invalidates old password')
-        click(main,270,36); xdo('key','Down','Return'); time.sleep(.3); shot(main,'second-printer.png')
+        click(main,270,36); xdo('key','Home','Down','Return'); time.sleep(.3); shot(main,'second-printer.png')
         process.terminate(); process.wait(timeout=5)
         process=subprocess.Popen([str(app)],env=env,stdout=log,stderr=subprocess.STDOUT)
         main=window('FHZL — общий монитор'); time.sleep(1)
